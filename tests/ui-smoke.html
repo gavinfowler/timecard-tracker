@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Timecard Tracker UI smoke test</title>
+  <meta name="color-scheme" content="light dark">
+  <style>
+    body { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 2rem auto; max-width: 60rem; padding: 0 1rem; }
+    h1 { font-size: 1.2rem; }
+    #out { white-space: pre-wrap; }
+    /* The app markup is loaded only to drive it; keep it out of the way. */
+    #app-root { display: none; }
+    @media (prefers-color-scheme: dark) { body { background: #14161a; color: #e8eaee; } a { color: #7fa0ff; } }
+  </style>
+</head>
+<body>
+<h1>Timecard Tracker — UI smoke test</h1>
+<p><a href="./index.html">unit tests</a> · <a href="../index.html">back to the app</a></p>
+<p>Drives the real <code>index.html</code> markup through <code>ui.js</code>: adding codes,
+entering hours, filling, navigating periods, and exporting. Your saved timecard is
+snapshotted and restored when the run finishes.</p>
+<pre id="out">running…</pre>
+<div id="app-root"></div>
+<script type="module">
+const STORAGE_KEY = 'timecard-tracker/v1';
+// This test writes to the same localStorage key the app uses, so stash whatever
+// is really saved and put it back before we finish.
+const savedData = localStorage.getItem(STORAGE_KEY);
+const restore = () => {
+  if (savedData === null) localStorage.removeItem(STORAGE_KEY);
+  else localStorage.setItem(STORAGE_KEY, savedData);
+};
+window.addEventListener('pagehide', restore);
+
+const log = [];
+let failures = 0;
+const check = (name, actual, expected) => {
+  const ok = String(actual) === String(expected);
+  if (!ok) failures += 1;
+  log.push(`${ok ? 'PASS' : 'FAIL'}  ${name}${ok ? '' : `\n        expected: ${expected}\n        actual:   ${actual}`}`);
+};
+
+try {
+  // Load the real index.html markup into this document so ui.js finds its IDs.
+  const html = await (await fetch('../index.html')).text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const root = document.getElementById('app-root');
+  for (const node of [...doc.body.children]) {
+    if (node.tagName !== 'SCRIPT') root.append(document.importNode(node, true));
+  }
+
+  localStorage.removeItem(STORAGE_KEY);
+  const store = await import('../src/state.js');
+  const ui = await import('../src/ui.js');
+  const { buildCSV } = await import('../src/exporters.js');
+
+  const ctx = { state: store.loadState(), requestSave() { store.saveState(ctx.state); }, actions: {
+    exportCSV() {}, exportJSON() {}, importJSON() { return { ok: true }; },
+  } };
+  ctx.state.anchorPeriodStart = '2026-08-01';
+  ctx.state.activePeriodStart = '2026-08-01';
+  ui.mount(ctx);
+
+  const $ = (id) => document.getElementById(id);
+  const q = (sel) => document.querySelector(sel);
+  const fire = (el, type = 'input') => el.dispatchEvent(new Event(type, { bubbles: true }));
+  const setVal = (el, value) => { el.value = value; fire(el); };
+  const text = (id) => $(id).textContent.trim();
+
+  check('period range', text('period-range'), 'Aug 1 – Aug 14, 2026');
+  check('anchor input value', $('anchor-input').value, '2026-08-01');
+  check('pto label input', $('pto-label-input').value, 'PTO');
+  check('copy-codes disabled with no previous period', $('copy-codes').disabled, 'true');
+
+  // --- add charge codes through the real form -----------------------------
+  const form = $('code-form');
+  $('code-input').value = 'PROJ-A';
+  $('code-label').value = 'Platform';
+  form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+
+  $('code-input').value = 'PROJ-A-OT';
+  form.querySelector('input[value="overtime"]').checked = true;
+  form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+
+  check('two code chips rendered', document.querySelectorAll('.code-chip').length, 2);
+  check('columns added to week table', document.querySelectorAll('.days')[0].querySelectorAll('thead th').length, 9);
+  check('both weeks rendered', document.querySelectorAll('.days').length, 2);
+
+  // duplicate rejected
+  $('code-input').value = 'proj-a';
+  form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  check('duplicate code rejected', $('code-error').hidden, 'false');
+  check('still two codes', document.querySelectorAll('.code-chip').length, 2);
+
+  // --- enter a day --------------------------------------------------------
+  const D = '2026-08-03'; // Monday of week 1
+  setVal(q(`input[aria-label="Start time ${D}"]`), '07:30');
+  setVal(q(`input[aria-label="End time ${D}"]`), '17:00');
+  setVal(q(`input[aria-label="Break hours ${D}"]`), '0.5');
+
+  const row = q(`input[aria-label="Start time ${D}"]`).closest('tr');
+  check('worked hours computed', row.querySelector('.worked span').textContent, '9.00');
+  check('chip shows unallocated', row.querySelector('.chip').textContent, '9.00 unallocated');
+  check('fill button visible', row.querySelector('.fill-btn').hidden, 'false');
+
+  setVal(q(`input[aria-label="PROJ-A hours ${D}"]`), '6');
+  check('chip after partial split', row.querySelector('.chip').textContent, '3.00 unallocated');
+  setVal(q(`input[aria-label="PROJ-A-OT hours ${D}"]`), '3');
+  check('chip balanced', row.querySelector('.chip').textContent, '✓ balanced');
+  check('regular stat', text('stat-regular'), '6.00');
+  check('overtime stat', text('stat-ot'), '3.00');
+  check('ot note', text('stat-ot-note'), 'charged to overtime codes');
+  check('remaining stat', text('stat-remaining'), '74.00');
+  check('total paid', text('stat-total'), '9.00');
+  check('per-code chip total', q('[data-code-total]').textContent, '6.00 hrs');
+  check('week 1 totals', q('[data-week-totals="0"]').textContent, 'Worked 9.00');
+
+  // over-allocation
+  setVal(q(`input[aria-label="PROJ-A hours ${D}"]`), '8');
+  check('chip over worked', row.querySelector('.chip').textContent, '2.00 over worked');
+  check('input flagged over', q(`input[aria-label="PROJ-A hours ${D}"]`).classList.contains('is-over'), 'true');
+  setVal(q(`input[aria-label="PROJ-A hours ${D}"]`), '6');
+
+  // --- fill button --------------------------------------------------------
+  const D2 = '2026-08-04';
+  setVal(q(`input[aria-label="Start time ${D2}"]`), '09:00');
+  setVal(q(`input[aria-label="End time ${D2}"]`), '17:00');
+  const row2 = q(`input[aria-label="Start time ${D2}"]`).closest('tr');
+  row2.querySelector('.fill-btn').click();
+  check('fill balances the day', row2.querySelector('.chip').textContent, '✓ balanced');
+  check('fill targeted last-used code', q(`input[aria-label="PROJ-A hours ${D2}"]`).value, '8');
+
+  // --- overnight ----------------------------------------------------------
+  const D3 = '2026-08-05';
+  setVal(q(`input[aria-label="Start time ${D3}"]`), '22:00');
+  setVal(q(`input[aria-label="End time ${D3}"]`), '06:00');
+  const row3 = q(`input[aria-label="Start time ${D3}"]`).closest('tr');
+  check('overnight hours', row3.querySelector('.worked span').textContent, '8.00');
+  check('overnight hint shown', row3.querySelector('.worked__overnight').hidden, 'false');
+  setVal(q(`input[aria-label="PROJ-A hours ${D3}"]`), '8');
+
+  // --- PTO ----------------------------------------------------------------
+  const D4 = '2026-08-06';
+  setVal(q(`input[aria-label="PTO hours ${D4}"]`), '8');
+  check('pto stat', text('stat-pto'), '8.00');
+  check('regular includes pto', text('stat-regular'), '30.00'); // 6+8+8 worked reg + 8 pto
+  check('regular note', text('stat-regular-note'), '22.00 worked + 8.00 PTO');
+  check('pto row chip', q(`input[aria-label="PTO hours ${D4}"]`).closest('tr').querySelector('.chip').textContent, '8.00 PTO');
+  check('overtime unchanged by pto', text('stat-ot'), '3.00');
+
+  // --- persistence + period navigation ------------------------------------
+  store.flushSave(ctx.state);
+  const reloaded = store.loadState();
+  check('saved to localStorage', reloaded.periods['2026-08-01'].days[D].alloc ? 'yes' : 'no', 'yes');
+  check('reloaded worked start', reloaded.periods['2026-08-01'].days[D].start, '07:30');
+
+  $('next-period').click();
+  check('advanced two weeks', text('period-range'), 'Aug 15 – Aug 28, 2026');
+  check('new period has no codes', document.querySelectorAll('.code-chip').length, 0);
+  check('new period totals reset', text('stat-regular'), '0.00');
+  check('copy-codes now enabled', $('copy-codes').disabled, 'false');
+
+  $('copy-codes').click();
+  check('codes copied forward', document.querySelectorAll('.code-chip').length, 2);
+  check('copied codes carry no hours', q('[data-code-total]').textContent, '0.00 hrs');
+
+  $('prev-period').click();
+  check('back to first period', text('period-range'), 'Aug 1 – Aug 14, 2026');
+  check('hours survived the round trip', q(`input[aria-label="PROJ-A hours ${D}"]`).value, '6');
+
+  // --- over-80 spill ------------------------------------------------------
+  for (const date of ['2026-08-07','2026-08-10','2026-08-11','2026-08-12','2026-08-13','2026-08-14']) {
+    setVal(q(`input[aria-label="Start time ${date}"]`), '08:00');
+    setVal(q(`input[aria-label="End time ${date}"]`), '20:00');
+    setVal(q(`input[aria-label="PROJ-A hours ${date}"]`), '12');
+  }
+  // regular worked: 6 + 8 + 8 + 72 = 94  -> 80 regular + 14 spill, plus 3 on the OT code
+  check('spill: regular capped', text('stat-regular'), '88.00'); // 80 worked + 8 PTO
+  check('spill: overtime total', text('stat-ot'), '17.00'); // 3 OT-code + 14 spill
+  check('spill: ot note', text('stat-ot-note'), '3.00 on OT codes + 14.00 over 80');
+  check('spill: remaining zero', text('stat-remaining'), '0.00');
+  check('spill: over-cap note', text('stat-regular-note'), '80.00 worked + 8.00 PTO — over 80');
+
+  // --- CSV ----------------------------------------------------------------
+  const csv = buildCSV(ctx.state, '2026-08-01').split('\r\n');
+  check('csv header', csv[0], 'date,weekday,charge_code,type,hours');
+  check('csv first row', csv[1], '2026-08-03,Mon,PROJ-A,regular,6.00');
+  check('csv ot row', csv[2], '2026-08-03,Mon,PROJ-A-OT,overtime,3.00');
+  check('csv pto row', csv.find((r) => r.includes('PTO')), '2026-08-06,Thu,PTO,pto,8.00');
+  const csvSum = csv.slice(1).reduce((s, r) => s + Number(r.split(',')[4]), 0);
+  check('csv sums to total paid', csvSum.toFixed(2), '105.00'); // 88 regular + 17 OT
+
+  // --- code removal clears its hours --------------------------------------
+  const originalConfirm = window.confirm;
+  window.confirm = () => true;
+  document.querySelectorAll('.code-chip__remove')[1].click(); // PROJ-A-OT
+  window.confirm = originalConfirm;
+  check('code removed', document.querySelectorAll('.code-chip').length, 1);
+  check('its hours removed from OT', text('stat-ot'), '14.00');
+} catch (err) {
+  failures += 1;
+  log.push(`FAIL  threw: ${err && err.stack ? err.stack : err}`);
+} finally {
+  restore();
+}
+
+check('your saved timecard was restored', localStorage.getItem(STORAGE_KEY), savedData);
+
+globalThis.__smokeResults = { failures, log };
+document.getElementById('out').textContent =
+  `${failures === 0 ? 'ALL PASS' : failures + ' FAILURES'}\n\n` + log.join('\n');
+document.title = failures === 0 ? 'SMOKE PASS' : `SMOKE FAIL (${failures})`;
+</script>
+</body>
+</html>

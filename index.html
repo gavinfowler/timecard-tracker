@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Timecard Tracker</title>
+  <meta name="description" content="Track hours against charge codes across a two-week pay period.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#9200;</text></svg>">
+</head>
+<body>
+  <a class="skip-link" href="#daygrid">Skip to day entry</a>
+
+  <header class="app-header">
+    <div class="app-header__title">
+      <h1>Timecard Tracker</h1>
+      <p class="app-header__sub">Two-week pay period &middot; Saturday to Friday &middot; 80 regular hours</p>
+    </div>
+
+    <nav class="period-nav" aria-label="Pay period">
+      <button type="button" id="prev-period" class="btn btn--icon" aria-label="Previous pay period">&#9664;</button>
+      <div class="period-nav__label">
+        <strong id="period-range">&nbsp;</strong>
+        <span id="period-relative" class="period-nav__relative"></span>
+      </div>
+      <button type="button" id="next-period" class="btn btn--icon" aria-label="Next pay period">&#9654;</button>
+      <button type="button" id="today-period" class="btn">Today</button>
+    </nav>
+  </header>
+
+  <p id="storage-warning" class="banner banner--warn" role="status" hidden></p>
+  <p id="toast" class="banner banner--info" role="status" hidden></p>
+
+  <section class="summary" aria-labelledby="summary-heading">
+    <h2 id="summary-heading" class="visually-hidden">Pay period totals</h2>
+    <div class="summary__stats" aria-live="polite">
+      <div class="stat stat--regular">
+        <span class="stat__label">Regular</span>
+        <span class="stat__value"><span id="stat-regular">0.00</span><span class="stat__unit"> / 80</span></span>
+        <span class="stat__note" id="stat-regular-note"></span>
+      </div>
+      <div class="stat stat--ot">
+        <span class="stat__label">Overtime</span>
+        <span class="stat__value" id="stat-ot">0.00</span>
+        <span class="stat__note" id="stat-ot-note"></span>
+      </div>
+      <div class="stat stat--pto">
+        <span class="stat__label">PTO</span>
+        <span class="stat__value" id="stat-pto">0.00</span>
+        <span class="stat__note">included in regular</span>
+      </div>
+      <div class="stat stat--remaining">
+        <span class="stat__label">Regular remaining</span>
+        <span class="stat__value" id="stat-remaining">80.00</span>
+        <span class="stat__note" id="stat-unallocated"></span>
+      </div>
+      <div class="stat stat--total">
+        <span class="stat__label">Total paid</span>
+        <span class="stat__value" id="stat-total">0.00</span>
+        <span class="stat__note">regular + PTO + OT</span>
+      </div>
+    </div>
+    <div class="progress" role="img" aria-label="Regular hours progress toward 80">
+      <div class="progress__bar" id="progress-regular"></div>
+      <div class="progress__bar progress__bar--pto" id="progress-pto"></div>
+      <div class="progress__bar progress__bar--ot" id="progress-ot"></div>
+    </div>
+  </section>
+
+  <main>
+    <section class="panel" aria-labelledby="codes-heading">
+      <div class="panel__head">
+        <h2 id="codes-heading">Charge codes</h2>
+        <button type="button" id="copy-codes" class="btn btn--subtle">Copy from previous period</button>
+      </div>
+
+      <form id="code-form" class="code-form">
+        <div class="field">
+          <label for="code-input">Charge code</label>
+          <input type="text" id="code-input" name="code" placeholder="PROJ-A" autocomplete="off" required>
+        </div>
+        <div class="field">
+          <label for="code-label">Description <span class="field__optional">(optional)</span></label>
+          <input type="text" id="code-label" name="label" placeholder="Platform work" autocomplete="off">
+        </div>
+        <fieldset class="field field--radios">
+          <legend>Charging type</legend>
+          <label class="radio"><input type="radio" name="type" value="regular" checked> Regular</label>
+          <label class="radio"><input type="radio" name="type" value="overtime"> Overtime</label>
+        </fieldset>
+        <button type="submit" class="btn btn--primary">Add code</button>
+      </form>
+      <p id="code-error" class="form-error" role="alert" hidden></p>
+
+      <ul id="code-list" class="code-list"></ul>
+      <p id="code-empty" class="empty-note">No charge codes yet. Add one to start splitting your hours.</p>
+    </section>
+
+    <section class="panel" id="daygrid" aria-labelledby="days-heading">
+      <div class="panel__head">
+        <h2 id="days-heading">Daily hours</h2>
+        <p class="panel__hint">Enter start, end, and break. Split the resulting hours across your charge codes.</p>
+      </div>
+      <div id="weeks"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="settings-heading">
+      <h2 id="settings-heading">Settings</h2>
+      <div class="settings-grid">
+        <div class="field">
+          <label for="anchor-input">Pay period start date</label>
+          <input type="date" id="anchor-input">
+          <p class="field__hint" id="anchor-hint">Must be a Saturday; other dates snap back to the Saturday before.</p>
+        </div>
+        <div class="field">
+          <label for="pto-label-input">PTO code used in exports</label>
+          <input type="text" id="pto-label-input" placeholder="PTO" autocomplete="off">
+          <p class="field__hint">Your employer's leave code, if it isn't just "PTO".</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <div class="app-footer__actions">
+      <button type="button" id="export-csv" class="btn">Export CSV</button>
+      <button type="button" id="export-json" class="btn">Export JSON backup</button>
+      <button type="button" id="import-json" class="btn">Import JSON backup</button>
+      <button type="button" id="clear-period" class="btn btn--danger">Clear this period</button>
+      <input type="file" id="import-file" accept="application/json,.json" hidden>
+    </div>
+    <p class="app-footer__note">
+      Everything stays in this browser's local storage. Nothing is uploaded.
+      Export a JSON backup before clearing site data or switching machines.
+    </p>
+  </footer>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
