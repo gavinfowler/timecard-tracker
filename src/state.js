@@ -197,20 +197,32 @@ export function peekDay(state, startISO, dateISO) {
   return (period && period.days[dateISO]) || null;
 }
 
+/** A code is identified by name *and* charging type, so the same number can be
+    carried once as regular and once as overtime. The type leads: a name may
+    contain spaces, so trailing it would let "A B"+regular collide with "A"+"B regular". */
+function codeKey(code, type) {
+  return `${type} ${String(code).trim().toLowerCase()}`;
+}
+
 export function addCode(state, startISO, { code, label, type }) {
   const period = getPeriod(state, startISO);
   const trimmed = String(code ?? '').trim();
   if (!trimmed) return { ok: false, error: 'Enter a charge code.' };
+
+  const kind = type === 'overtime' ? 'overtime' : 'regular';
   const clash = period.codes.some(
-    (existing) => existing.code.toLowerCase() === trimmed.toLowerCase(),
+    (existing) => codeKey(existing.code, existing.type) === codeKey(trimmed, kind),
   );
-  if (clash) return { ok: false, error: `${trimmed} is already in this pay period.` };
+  if (clash) {
+    const article = kind === 'overtime' ? 'an overtime' : 'a regular';
+    return { ok: false, error: `${trimmed} is already in this pay period as ${article} code.` };
+  }
 
   const entry = {
     id: newId(),
     code: trimmed,
     label: String(label ?? '').trim(),
-    type: type === 'overtime' ? 'overtime' : 'regular',
+    type: kind,
   };
   period.codes.push(entry);
   return { ok: true, code: entry };
@@ -235,12 +247,12 @@ export function copyCodesFromPrevious(state, startISO, previousStartISO) {
   const previous = state.periods[previousStartISO];
   if (!previous || previous.codes.length === 0) return 0;
   const period = getPeriod(state, startISO);
-  const existing = new Set(period.codes.map((code) => code.code.toLowerCase()));
+  const existing = new Set(period.codes.map((code) => codeKey(code.code, code.type)));
   let copied = 0;
   for (const code of previous.codes) {
-    if (existing.has(code.code.toLowerCase())) continue;
+    if (existing.has(codeKey(code.code, code.type))) continue;
     period.codes.push({ id: newId(), code: code.code, label: code.label, type: code.type });
-    existing.add(code.code.toLowerCase());
+    existing.add(codeKey(code.code, code.type));
     copied += 1;
   }
   return copied;

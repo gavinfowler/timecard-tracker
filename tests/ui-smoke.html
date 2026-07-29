@@ -68,6 +68,46 @@ try {
   const setVal = (el, value) => { el.value = value; fire(el); };
   const text = (id) => $(id).textContent.trim();
 
+  // Days are columns now, so a day's cells are found by date, not by row.
+  const chargeCode = (date, code) => {
+    const input = q(`input[aria-label="${code} hours ${date}"]`);
+    if (!input) throw new Error(`${code} has no hours box on ${date}`);
+    return input;
+  };
+  const cell = (date, sel) => {
+    const el = q(`td[data-date="${date}"]${sel}`);
+    if (!el) throw new Error(`no ${sel} cell on ${date}`);
+    return el;
+  };
+  const worked = (date) => cell(date, '.worked').querySelector('span').textContent;
+  const chip = (date) => cell(date, '.balance').querySelector('.chip').textContent;
+  const fillBtn = (date) => cell(date, '.balance').querySelector('.fill-btn');
+  const total = (weekIndex, key) => q(`[data-total="${weekIndex}:${key}"]`).textContent;
+
+  // --- the scratch time calculator ----------------------------------------
+  // The static "not loaded" fallback must be gone once the grid has drawn.
+  check('day grid replaced its fallback note', document.querySelectorAll('.grid-fallback').length, 0);
+  check('day grid drew both weeks', document.querySelectorAll('#weeks .week').length, 2);
+
+  check('calculator starts empty', text('calc-hours'), '—');
+  setVal($('calc-start'), '07:30');
+  check('one time alone is not enough', text('calc-hours'), '—');
+  check('and says so', text('calc-note'), 'Needs both a start and an end time.');
+  setVal($('calc-end'), '17:00');
+  check('calculates the span', text('calc-hours'), '9.5 hrs');
+  check('and shows it exactly', text('calc-note'), '9h 30m');
+  setVal($('calc-start'), '08:00');
+  setVal($('calc-end'), '16:20');
+  check('rounds to the tenth', text('calc-hours'), '8.3 hrs'); // 8h20m is 8.333
+  check('exact minutes unrounded', text('calc-note'), '8h 20m');
+  setVal($('calc-start'), '22:00');
+  setVal($('calc-end'), '06:00');
+  check('calculator handles overnight', text('calc-hours'), '8.0 hrs');
+  check('and flags it', text('calc-note'), '8h 00m · crosses midnight');
+  $('calc-clear').click();
+  check('clear resets the calculator', text('calc-hours'), '—');
+  check('clear empties the inputs', $('calc-start').value + $('calc-end').value, '');
+
   check('period range', text('period-range'), 'Aug 1 – Aug 14, 2026');
   check('anchor input value', $('anchor-input').value, '2026-08-01');
   check('pto label input', $('pto-label-input').value, 'PTO');
@@ -84,8 +124,20 @@ try {
   form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
 
   check('two code chips rendered', document.querySelectorAll('.code-chip').length, 2);
-  check('columns added to week table', document.querySelectorAll('.days')[0].querySelectorAll('thead th').length, 9);
-  check('both weeks rendered', document.querySelectorAll('.days').length, 2);
+  check('a week is seven days plus a label and a total column',
+    document.querySelectorAll('.grid')[0].querySelectorAll('thead th').length, 9);
+  check('both weeks rendered', document.querySelectorAll('.grid').length, 2);
+  check('one grid row per charge code per week',
+    document.querySelectorAll('.grid__row--code').length, 4);
+  check('every day gets a box for every charge code',
+    document.querySelectorAll('td.alloc').length, 28);
+  check('all charge-code boxes start blank',
+    [...document.querySelectorAll('.alloc__hours')].every((i) => i.value === ''), 'true');
+  check('hours step in tenths', q('.alloc__hours').step, '0.1');
+  check('break and PTO step in tenths too', q('input[aria-label^="Break hours"]').step, '0.1');
+  check('overtime codes are marked on their row',
+    document.querySelectorAll('.grid__code-type').length, 2);
+  check('days run across the top', q('.grid thead .grid__day-dow').textContent, 'Sat');
 
   // duplicate rejected
   $('code-input').value = 'proj-a';
@@ -99,15 +151,29 @@ try {
   setVal(q(`input[aria-label="End time ${D}"]`), '17:00');
   setVal(q(`input[aria-label="Break hours ${D}"]`), '0.5');
 
-  const row = q(`input[aria-label="Start time ${D}"]`).closest('tr');
-  check('worked hours computed', row.querySelector('.worked span').textContent, '9.00');
-  check('chip shows unallocated', row.querySelector('.chip').textContent, '9.00 unallocated');
-  check('fill button visible', row.querySelector('.fill-btn').hidden, 'false');
+  check('worked hours computed', worked(D), '9.00');
+  check('chip shows unallocated', chip(D), '9.00 unallocated');
+  check('fill button visible', fillBtn(D).hidden, 'false');
+  check('week column totals worked hours', total(0, 'worked'), '9.00');
+  check('week column totals breaks', total(0, 'break'), '0.50');
 
-  setVal(q(`input[aria-label="PROJ-A hours ${D}"]`), '6');
-  check('chip after partial split', row.querySelector('.chip').textContent, '3.00 unallocated');
-  setVal(q(`input[aria-label="PROJ-A-OT hours ${D}"]`), '3');
-  check('chip balanced', row.querySelector('.chip').textContent, '✓ balanced');
+  // --- charging a day across codes ----------------------------------------
+  setVal(chargeCode(D, 'PROJ-A'), '6');
+  check('chip after partial split', chip(D), '3.00 unallocated');
+  setVal(chargeCode(D, 'PROJ-A-OT'), '3');
+  check('chip balanced', chip(D), '✓ balanced');
+  check('both codes still have a box on the day',
+    document.querySelectorAll(`td.alloc[data-date="${D}"]`).length, 2);
+  check('week column totals the code row', total(0, `code:${ctx.state.periods['2026-08-01'].codes[0].id}`), '6.00');
+  check('week balance chip', q('[data-total="0:balance"] .chip').textContent, '✓ balanced');
+
+  // tenth-of-an-hour entry
+  setVal(chargeCode(D, 'PROJ-A'), '6.1');
+  check('tenths accepted', chip(D), '0.10 over worked');
+  setVal(chargeCode(D, 'PROJ-A-OT'), '2.9');
+  check('tenths balance out', chip(D), '✓ balanced');
+  setVal(chargeCode(D, 'PROJ-A'), '6');
+  setVal(chargeCode(D, 'PROJ-A-OT'), '3');
   check('regular stat', text('stat-regular'), '6.00');
   check('overtime stat', text('stat-ot'), '3.00');
   check('ot note', text('stat-ot-note'), 'charged to overtime codes');
@@ -118,7 +184,7 @@ try {
 
   // over-allocation
   setVal(q(`input[aria-label="PROJ-A hours ${D}"]`), '8');
-  check('chip over worked', row.querySelector('.chip').textContent, '2.00 over worked');
+  check('chip over worked', chip(D), '2.00 over worked');
   check('input flagged over', q(`input[aria-label="PROJ-A hours ${D}"]`).classList.contains('is-over'), 'true');
   setVal(q(`input[aria-label="PROJ-A hours ${D}"]`), '6');
 
@@ -126,19 +192,32 @@ try {
   const D2 = '2026-08-04';
   setVal(q(`input[aria-label="Start time ${D2}"]`), '09:00');
   setVal(q(`input[aria-label="End time ${D2}"]`), '17:00');
-  const row2 = q(`input[aria-label="Start time ${D2}"]`).closest('tr');
-  row2.querySelector('.fill-btn').click();
-  check('fill balances the day', row2.querySelector('.chip').textContent, '✓ balanced');
+  fillBtn(D2).click();
+  check('fill balances the day', chip(D2), '✓ balanced');
   check('fill targeted last-used code', q(`input[aria-label="PROJ-A hours ${D2}"]`).value, '8');
+
+  // --- clearing a day's hours releases them -------------------------------
+  const D5 = '2026-08-08';
+  setVal(q(`input[aria-label="Start time ${D5}"]`), '10:00');
+  setVal(q(`input[aria-label="End time ${D5}"]`), '14:00');
+  setVal(chargeCode(D5, 'PROJ-A'), '4');
+  check('day balanced on one code', chip(D5), '✓ balanced');
+  setVal(chargeCode(D5, 'PROJ-A'), '');
+  check('cleared hours go back to unallocated', chip(D5), '4.00 unallocated');
+  check('the code box stays on the day',
+    document.querySelectorAll(`td.alloc[data-date="${D5}"]`).length, 2);
+  setVal(q(`input[aria-label="Start time ${D5}"]`), '');
+  setVal(q(`input[aria-label="End time ${D5}"]`), '');
 
   // --- overnight ----------------------------------------------------------
   const D3 = '2026-08-05';
   setVal(q(`input[aria-label="Start time ${D3}"]`), '22:00');
   setVal(q(`input[aria-label="End time ${D3}"]`), '06:00');
-  const row3 = q(`input[aria-label="Start time ${D3}"]`).closest('tr');
-  check('overnight hours', row3.querySelector('.worked span').textContent, '8.00');
-  check('overnight hint shown', row3.querySelector('.worked__overnight').hidden, 'false');
-  setVal(q(`input[aria-label="PROJ-A hours ${D3}"]`), '8');
+  check('overnight hours', worked(D3), '8.00');
+  check('overnight hint shown', cell(D3, '.worked').querySelector('.worked__overnight').hidden, 'false');
+  check('other days show no overnight hint',
+    cell(D2, '.worked').querySelector('.worked__overnight').hidden, 'true');
+  setVal(chargeCode(D3, 'PROJ-A'), '8');
 
   // --- PTO ----------------------------------------------------------------
   const D4 = '2026-08-06';
@@ -146,7 +225,8 @@ try {
   check('pto stat', text('stat-pto'), '8.00');
   check('regular includes pto', text('stat-regular'), '30.00'); // 6+8+8 worked reg + 8 pto
   check('regular note', text('stat-regular-note'), '22.00 worked + 8.00 PTO');
-  check('pto row chip', q(`input[aria-label="PTO hours ${D4}"]`).closest('tr').querySelector('.chip').textContent, '8.00 PTO');
+  check('pto day chip', chip(D4), '8.00 PTO');
+  check('pto totals in the week column', total(0, 'pto'), '8.00');
   check('overtime unchanged by pto', text('stat-ot'), '3.00');
 
   // --- persistence + period navigation ------------------------------------
@@ -158,6 +238,9 @@ try {
   $('next-period').click();
   check('advanced two weeks', text('period-range'), 'Aug 15 – Aug 28, 2026');
   check('new period has no codes', document.querySelectorAll('.code-chip').length, 0);
+  check('no codes means no code rows', document.querySelectorAll('.grid__row--code').length, 0);
+  check('the entry rows survive with no codes', document.querySelectorAll('.grid').length, 2);
+  check('empty week totals show a dash', total(0, 'worked'), '—');
   check('new period totals reset', text('stat-regular'), '0.00');
   check('copy-codes now enabled', $('copy-codes').disabled, 'false');
 
@@ -173,7 +256,7 @@ try {
   for (const date of ['2026-08-07','2026-08-10','2026-08-11','2026-08-12','2026-08-13','2026-08-14']) {
     setVal(q(`input[aria-label="Start time ${date}"]`), '08:00');
     setVal(q(`input[aria-label="End time ${date}"]`), '20:00');
-    setVal(q(`input[aria-label="PROJ-A hours ${date}"]`), '12');
+    setVal(chargeCode(date, 'PROJ-A'), '12');
   }
   // regular worked: 6 + 8 + 8 + 72 = 94  -> 80 regular + 14 spill, plus 3 on the OT code
   check('spill: regular capped', text('stat-regular'), '88.00'); // 80 worked + 8 PTO
@@ -198,6 +281,39 @@ try {
   window.confirm = originalConfirm;
   check('code removed', document.querySelectorAll('.code-chip').length, 1);
   check('its hours removed from OT', text('stat-ot'), '14.00');
+
+  // --- the same code under both charging types ----------------------------
+  $('code-input').value = 'PROJ-A';
+  $('code-label').value = 'Platform, overtime';
+  form.querySelector('input[value="overtime"]').checked = true;
+  form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  check('same code accepted under the other type', $('code-error').hidden, 'true');
+  check('now two codes named PROJ-A', document.querySelectorAll('.code-chip').length, 2);
+  check('a row each per week', document.querySelectorAll('.grid__row--code').length, 4);
+  check('both rows are tagged with their type',
+    document.querySelectorAll('.grid__code-type').length, 4);
+  check('the twins get distinct labels',
+    q(`input[aria-label="PROJ-A regular hours ${D}"]`).value, '6');
+  check('the overtime twin starts empty',
+    q(`input[aria-label="PROJ-A overtime hours ${D}"]`).value, '');
+
+  setVal(q(`input[aria-label="PROJ-A overtime hours ${D}"]`), '2');
+  check('the overtime twin charges overtime', text('stat-ot'), '16.00');
+  check('the regular twin is untouched', q(`input[aria-label="PROJ-A regular hours ${D}"]`).value, '6');
+
+  // a third PROJ-A of a type already present is still refused
+  $('code-input').value = 'proj-a';
+  form.querySelector('input[value="overtime"]').checked = true;
+  form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  check('a second overtime PROJ-A is refused', $('code-error').hidden, 'false');
+  check('error names the type', $('code-error').textContent,
+    'proj-a is already in this pay period as an overtime code.');
+  check('still two codes named PROJ-A', document.querySelectorAll('.code-chip').length, 2);
+
+  const twinCsv = buildCSV(ctx.state, '2026-08-01').split('\r\n');
+  check('csv keeps the twins on separate rows',
+    twinCsv.filter((r) => r.startsWith(`${D},Mon,PROJ-A,`)).join(' | '),
+    `${D},Mon,PROJ-A,regular,6.00 | ${D},Mon,PROJ-A,overtime,2.00`);
 } catch (err) {
   failures += 1;
   log.push(`FAIL  threw: ${err && err.stack ? err.stack : err}`);

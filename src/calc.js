@@ -22,6 +22,11 @@ export function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
 }
 
+/** Hours are entered and reported in tenths. */
+export function round1(n) {
+  return Math.round((Number(n) || 0) * 10) / 10;
+}
+
 /** "07:30" -> 7.5. Returns null for blank or malformed input. */
 export function parseTimeToHours(value) {
   const match = /^(\d{1,2}):(\d{2})$/.exec(String(value ?? '').trim());
@@ -38,16 +43,23 @@ export function toNumber(value) {
 }
 
 /**
- * Worked hours for one day: end - start - break, clamped at zero.
- * An end at or before the start is read as an overnight shift (+24h).
+ * Hours from one clock time to another, or null if either is missing. An end at
+ * or before the start is read as an overnight shift (+24h).
  */
-export function dayWorked(day) {
-  if (!day) return 0;
-  const start = parseTimeToHours(day.start);
-  const end = parseTimeToHours(day.end);
-  if (start === null || end === null) return 0;
+export function spanHours(startValue, endValue) {
+  const start = parseTimeToHours(startValue);
+  const end = parseTimeToHours(endValue);
+  if (start === null || end === null) return null;
   let span = end - start;
   if (span <= 0) span += 24;
+  return round2(span);
+}
+
+/** Worked hours for one day: the span less the break, clamped at zero. */
+export function dayWorked(day) {
+  if (!day) return 0;
+  const span = spanHours(day.start, day.end);
+  if (span === null) return 0;
   return round2(Math.max(0, span - Math.max(0, toNumber(day.breakHours))));
 }
 

@@ -51,7 +51,9 @@ body {
   background: var(--bg);
   color: var(--text);
   font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  max-width: 1400px;
+  /* Wide enough for the 7-day matrix plus its label and total columns without
+     the tables having to scroll on a desktop screen. */
+  max-width: 1680px;
   margin-inline: auto;
 }
 
@@ -157,6 +159,7 @@ input[type="number"] {
 }
 
 input:focus-visible,
+button:focus-visible,
 .btn:focus-visible,
 a:focus-visible {
   outline: 2px solid var(--accent);
@@ -277,6 +280,28 @@ a:focus-visible {
   margin-bottom: 0.75rem;
 }
 
+/* --- time calculator ------------------------------------------------- */
+
+.calc {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem 1.1rem;
+}
+.calc .time-input { width: 8.5rem; }
+.calc__result {
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 0 0.25rem;
+  line-height: 1.2;
+}
+.calc__hours {
+  font-size: 1.5rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.calc__note { font-size: 0.75rem; color: var(--text-muted); min-height: 1em; }
+
 .code-form {
   display: flex;
   flex-wrap: wrap;
@@ -356,48 +381,123 @@ a:focus-visible {
 
 .table-scroll { overflow-x: auto; }
 
-table.days {
+/* The week matrix: days across the top, entry rows and charge codes down the
+   left. Fixed layout keeps all seven days the same width whatever they hold. */
+table.grid {
   width: 100%;
+  /* Below this the time inputs start clipping their AM/PM, so scroll instead. */
+  min-width: 72rem;
   border-collapse: collapse;
+  table-layout: fixed;
   font-size: 0.9rem;
 }
-table.days th,
-table.days td {
-  padding: 0.3rem 0.45rem;
+.grid__col-label { width: 12rem; }
+.grid__col-total { width: 6.5rem; }
+
+table.grid th,
+table.grid td {
+  padding: 0.25rem 0.4rem;
   text-align: left;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
-table.days thead th {
+table.grid thead th {
+  vertical-align: bottom;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.grid__day-dow { display: block; font-weight: 700; font-size: 0.82rem; }
+.grid__day-date { display: block; font-size: 0.72rem; color: var(--text-muted); }
+.grid__total-head {
+  text-align: right;
+  padding-right: 0.8rem;
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
   font-weight: 700;
-  border-bottom: 1px solid var(--border-strong);
 }
-table.days th.num, table.days td.num { text-align: right; }
-table.days td.num, .worked { font-variant-numeric: tabular-nums; }
 
-tr.day--weekend { background: color-mix(in srgb, var(--surface-alt) 65%, transparent); }
-tr.day--today { box-shadow: inset 3px 0 0 var(--accent); }
-tr.day--today .day-date { color: var(--accent); font-weight: 700; }
+.grid__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.grid__row:not(.grid__row--code) > .grid__label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 
-.day-date { display: flex; flex-direction: column; line-height: 1.2; }
-.day-date__dow { font-weight: 650; }
-.day-date__date { font-size: 0.75rem; color: var(--text-muted); }
+.grid__code { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.grid__code-name {
+  font-size: 0.88rem;
+  font-weight: 650;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.grid__code-desc {
+  font-size: 0.72rem;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Shown on every overtime row, and on both rows of a code carried under each
+   charging type — there, the tag is the only thing telling them apart. */
+.grid__code-type {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.05rem 0.3rem;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--ot) 18%, transparent);
+  color: var(--ot);
+}
+.grid__code-type--regular { background: var(--accent-soft); color: var(--accent); }
 
-.time-input { width: 6.9rem; }
-.hours-input { width: 4.6rem; text-align: right; }
+/* Times, charge codes, and what is left over read as three bands. */
+.grid__band + .grid__band > tr:first-child > th,
+.grid__band + .grid__band > tr:first-child > td {
+  border-top: 2px solid var(--border-strong);
+}
+.grid__band--codes .grid__row:hover > .grid__label { color: var(--text); }
+
+/* The inputs carry their own background, so column shading only shows in the
+   gaps around them — it has to be the full tint to read at all. */
+.col--weekend { background: var(--surface-alt); }
+.col--today { background: var(--accent-soft); }
+.grid__day.col--today {
+  box-shadow: inset 0 3px 0 var(--accent);
+  color: var(--accent);
+}
+
+.grid__cell input { width: 100%; font-size: 0.85rem; padding-inline: 0.4rem; }
+.hours-input { text-align: right; }
 .hours-input.is-over { border-color: var(--danger); }
 
-.worked { font-weight: 650; }
+/* Worked hours and the week totals are text, not inputs, so they are inset by
+   the input's own padding to line up with the digits above and below them. */
+.grid__row--worked .grid__cell,
+.grid__total {
+  text-align: right;
+  padding-right: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+.grid__row--worked .grid__cell { font-weight: 650; }
+.grid__total { background: color-mix(in srgb, var(--surface-alt) 55%, transparent); }
+.grid__total--zero { color: var(--text-muted); }
+
 .worked__overnight {
   display: block;
   font-size: 0.68rem;
   color: var(--warn);
   font-weight: 600;
 }
+/* `display: block` above would otherwise beat the UA rule for [hidden]. */
+.worked__overnight[hidden] { display: none; }
 
 .chip {
   display: inline-flex;
@@ -464,6 +564,7 @@ tr.day--today .day-date { color: var(--accent); font-weight: 700; }
   .summary { position: static; box-shadow: none; }
   .app-footer__actions,
   .code-form,
+  .panel--calc,
   .skip-link,
   .period-nav button,
   .fill-btn,
@@ -471,4 +572,7 @@ tr.day--today .day-date { color: var(--accent); font-weight: 700; }
   #copy-codes { display: none !important; }
   body { background: #fff; }
   .panel { break-inside: avoid; box-shadow: none; }
+  /* Let the week matrix shrink to the page instead of running off it. */
+  table.grid { min-width: 0; font-size: 0.72rem; }
+  .grid__cell input { border-color: transparent; background: transparent; }
 }

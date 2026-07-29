@@ -1,22 +1,34 @@
 # Timecard Tracker
 
 A single-page timecard tracker for two-week pay periods that run **Saturday → Friday**
-with **80 regular hours**. Enter each day's start, end, and break; split the resulting
-hours across your charge codes; log PTO; and watch regular, overtime, and remaining
-hours update live.
+with **80 regular hours**. Each week is a grid of days across by charge codes down:
+enter each day's start, end, and break; charge those hours to any of your codes in
+tenth-of-an-hour steps; log PTO; and watch regular, overtime, and remaining hours
+update live. It assumes a desktop-width window.
 
 No build step, no dependencies, no server. Everything is stored in your browser's
 local storage — nothing is uploaded anywhere.
 
 ## Features
 
+- **Time calculator** — a scratch pad at the top of the page: give it a start and an
+  end and it reports the span in tenths of an hour (`8.4 hrs`) alongside the exact
+  `8h 25m`. It uses the same overnight rule as the grid and saves nothing.
 - **Pay periods** — configure the start date once (it snaps to a Saturday); every
   period after that is a 14-day stride from it. Navigate with ◀ ▶ or jump to Today.
-- **Charge codes** — add per-period codes, each marked *regular* or *overtime*.
-  One click copies last period's codes forward.
-- **Daily entry** — start/end/break gives you worked hours; split those hours across
-  charge codes. A balance chip per day shows `✓ balanced`, `N unallocated`, or
-  `N over worked`, with a **fill** button to dump the remainder into a code.
+- **Charge codes** — add per-period codes, each marked *regular* or *overtime*. The
+  same code can be carried under both types, for employers who bill overtime against
+  the same number; the two get their own rows, tagged `REG` and `OT`. A code is a
+  duplicate only if its name *and* type already exist. One click copies last period's
+  codes forward.
+- **Daily entry** — each week is a matrix: the seven days across the top, and down
+  the left the start/end/break/worked rows, then a row per charge code, then PTO and
+  the balance. So Monday can be split two ways and Tuesday charged to something else
+  entirely, and a code's week reads straight across. Hours go in in tenths of an hour
+  (`0.1`). A balance chip per day shows `✓ balanced`, `N unallocated`, or `N over
+  worked`, with a **fill** button to dump the remainder into that day's code.
+- **Week totals** — a right-hand column totals every row of the matrix: break, worked,
+  each charge code, PTO, and what the week still has unallocated.
 - **Live totals** — regular (of 80), overtime, PTO, remaining, and total paid, plus
   a progress bar and per-code period totals.
 - **PTO** — entered per day, counts toward the 80 regular hours, never creates overtime.

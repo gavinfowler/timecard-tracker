@@ -69,6 +69,28 @@
   </section>
 
   <main>
+    <section class="panel panel--calc" aria-labelledby="calc-heading">
+      <div class="panel__head">
+        <h2 id="calc-heading">Time calculator</h2>
+        <p class="panel__hint">A scratch pad — nothing here is saved or added to your timecard.</p>
+      </div>
+      <div class="calc">
+        <div class="field">
+          <label for="calc-start">Start</label>
+          <input type="time" id="calc-start" class="time-input">
+        </div>
+        <div class="field">
+          <label for="calc-end">End</label>
+          <input type="time" id="calc-end" class="time-input">
+        </div>
+        <p class="calc__result" aria-live="polite">
+          <span class="calc__hours" id="calc-hours">—</span>
+          <span class="calc__note" id="calc-note">Enter a start and an end time.</span>
+        </p>
+        <button type="button" id="calc-clear" class="btn btn--subtle">Clear</button>
+      </div>
+    </section>
+
     <section class="panel" aria-labelledby="codes-heading">
       <div class="panel__head">
         <h2 id="codes-heading">Charge codes</h2>
@@ -88,6 +110,7 @@
           <legend>Charging type</legend>
           <label class="radio"><input type="radio" name="type" value="regular" checked> Regular</label>
           <label class="radio"><input type="radio" name="type" value="overtime"> Overtime</label>
+          <p class="field__hint">Add a code twice — once of each type — to bill both against it.</p>
         </fieldset>
         <button type="submit" class="btn btn--primary">Add code</button>
       </form>
@@ -100,9 +123,18 @@
     <section class="panel" id="daygrid" aria-labelledby="days-heading">
       <div class="panel__head">
         <h2 id="days-heading">Daily hours</h2>
-        <p class="panel__hint">Enter start, end, and break. Split the resulting hours across your charge codes.</p>
+        <p class="panel__hint">Days run across the top, charge codes down the side. Enter start, end, and break, then split each day's worked hours across the codes, in tenths of an hour.</p>
       </div>
-      <div id="weeks"></div>
+      <!-- Replaced by the grid on the first render. If it is still on screen,
+           ui.js never ran — most often because the page was opened straight
+           from disk, where browsers refuse to load ES modules. -->
+      <div id="weeks">
+        <p class="no-codes-note grid-fallback">
+          The day grid has not loaded. It needs JavaScript, and the page has to be
+          served over <code>http://</code> — opening <code>index.html</code> straight
+          from the file system will not work. See "Running it locally" in the README.
+        </p>
+      </div>
     </section>
 
     <section class="panel" aria-labelledby="settings-heading">

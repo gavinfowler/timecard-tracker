@@ -2,7 +2,12 @@
 //
 // Structural changes (period switch, adding/removing a code) rebuild the day
 // grid. Typing hours does not: it mutates state and refreshes only the affected
-// row, the week header, and the summary, so inputs never lose focus mid-entry.
+// day, its week totals, and the summary, so inputs never lose focus mid-entry.
+//
+// Each week is one matrix: the seven days across the top, and down the left the
+// entry rows (start, end, break, worked), then a row per charge code, then PTO
+// and the balance. A day therefore owns a *column*, not a row — `rows` holds
+// the scattered cells that make up each day so refreshes stay targeted.
 
 import {
   REGULAR_HOURS_PER_PERIOD,
@@ -12,8 +17,11 @@ import {
   dayWorked,
   isOvernight,
   periodTotals,
+  round1,
   round2,
+  spanHours,
   toNumber,
+  totalsByCode,
   weekTotals,
 } from './calc.js';
 import {
@@ -31,8 +39,12 @@ import * as store from './state.js';
 
 const $ = (id) => document.getElementById(id);
 
-/** DOM handles for each rendered day row, so refreshes stay targeted. */
+/** DOM handles for each rendered day column, so refreshes stay targeted. */
 const rows = new Map();
+
+/** Week-total cells, keyed "<weekIndex>:<row>", so totals refresh in place. */
+const totalCells = new Map();
+
 let ctx = null;
 let lastUsedCodeId = null;
 let toastTimer = null;
@@ -194,7 +206,7 @@ function handleRemoveCode(code) {
   const allocated = totals.byCode.get(code.id) || 0;
   if (allocated !== 0) {
     const ok = window.confirm(
-      `${code.code} has ${fmt(allocated)} hours allocated in this pay period.\n\n` +
+      `${codeName(code)} has ${fmt(allocated)} hours allocated in this pay period.\n\n` +
         'Removing it deletes those hours. Continue?',
     );
     if (!ok) return;
@@ -205,9 +217,44 @@ function handleRemoveCode(code) {
   render();
 }
 
-// --- day rows --------------------------------------------------------------
+// --- day grid --------------------------------------------------------------
 
-function refreshRow(dateISO) {
+function codeById(codeId) {
+  return activePeriod().codes.find((code) => code.id === codeId) || null;
+}
+
+function dayAllocMap(dateISO) {
+  const day = store.peekDay(state(), activeStart(), dateISO);
+  return (day && day.alloc) || {};
+}
+
+/**
+ * True when the same code name is carried under both charging types. The pair
+ * is legitimate — plenty of employers bill overtime against the same number —
+ * so the two rows have to be told apart on sight and to a screen reader.
+ */
+function hasTypeTwin(code) {
+  return activePeriod().codes.some(
+    (other) => other.id !== code.id && other.code.toLowerCase() === code.code.toLowerCase(),
+  );
+}
+
+/** "PROJ-A", or "PROJ-A (overtime)" when both types of it exist. */
+function codeName(code) {
+  return hasTypeTwin(code) ? `${code.code} (${code.type})` : code.code;
+}
+
+/** "PROJ-A — Platform work (OT)", for the hover title on a code's row. */
+function codeDescription(code, twinned) {
+  let text = code.code;
+  if (code.label) text += ` — ${code.label}`;
+  if (code.type === 'overtime') text += ' (OT)';
+  else if (twinned) text += ' (regular)';
+  return text;
+}
+
+/** Repaint one day's computed cells: worked hours and the balance chip. */
+function refreshDay(dateISO) {
   const handle = rows.get(dateISO);
   if (!handle) return;
   const day = store.peekDay(state(), activeStart(), dateISO) || store.emptyDay();
@@ -237,34 +284,76 @@ function refreshRow(dateISO) {
     chip.textContent = `${fmt(-variance)} over worked`;
   }
 
-  for (const input of handle.allocInputs) {
+  for (const input of handle.allocInputs.values()) {
     input.classList.toggle('is-over', variance < -0.005);
   }
 }
 
+/** A zero total reads as clutter across a 7-day row, so blanks show as a dash. */
+function setTotal(weekIndex, key, hours) {
+  const cell = totalCells.get(`${weekIndex}:${key}`);
+  if (!cell) return;
+  cell.textContent = Math.abs(hours) < 0.005 ? '—' : fmt(hours);
+  cell.classList.toggle('grid__total--zero', Math.abs(hours) < 0.005);
+}
+
 function renderWeekTotals(weekIndex) {
-  const totals = weekTotals(activePeriod(), activeStart(), weekIndex);
+  const period = activePeriod();
+  const totals = weekTotals(period, activeStart(), weekIndex);
+
   const el = document.querySelector(`[data-week-totals="${weekIndex}"]`);
-  if (!el) return;
-  el.textContent = '';
+  if (el) {
+    el.textContent = '';
+    const worked = document.createElement('strong');
+    worked.textContent = fmt(totals.worked);
+    el.append('Worked ', worked);
 
-  const worked = document.createElement('strong');
-  worked.textContent = fmt(totals.worked);
-  el.append('Worked ', worked);
+    if (totals.P > 0) el.append(` · PTO ${fmt(totals.P)}`);
+    if (Math.abs(totals.unallocated) >= 0.005) {
+      el.append(
+        totals.unallocated > 0
+          ? ` · ${fmt(totals.unallocated)} unallocated`
+          : ` · ${fmt(-totals.unallocated)} over`,
+      );
+    }
+  }
 
-  if (totals.P > 0) el.append(` · PTO ${fmt(totals.P)}`);
-  if (Math.abs(totals.unallocated) >= 0.005) {
-    el.append(
-      totals.unallocated > 0
-        ? ` · ${fmt(totals.unallocated)} unallocated`
-        : ` · ${fmt(-totals.unallocated)} over`,
-    );
+  // The right-hand column: one week total per row of the matrix.
+  let breakHours = 0;
+  for (const dateISO of totals.dates) {
+    const day = store.peekDay(state(), activeStart(), dateISO);
+    if (day) breakHours += Math.max(0, toNumber(day.breakHours));
+  }
+  setTotal(weekIndex, 'break', breakHours);
+  setTotal(weekIndex, 'worked', totals.worked);
+  setTotal(weekIndex, 'pto', totals.P);
+
+  const byCode = totalsByCode(period, totals.dates);
+  for (const code of period.codes) setTotal(weekIndex, `code:${code.id}`, byCode.get(code.id) || 0);
+
+  const balance = totalCells.get(`${weekIndex}:balance`);
+  if (balance) {
+    const chip = balance.firstElementChild;
+    chip.className = 'chip';
+    if (totals.worked === 0 && totals.allocated === 0) {
+      chip.classList.add('chip--idle');
+      chip.textContent = '—';
+    } else if (Math.abs(totals.unallocated) < 0.005) {
+      chip.classList.add('chip--ok');
+      chip.textContent = '✓ balanced';
+    } else if (totals.unallocated > 0) {
+      chip.classList.add('chip--under');
+      chip.textContent = `${fmt(totals.unallocated)} left`;
+    } else {
+      chip.classList.add('chip--over');
+      chip.textContent = `${fmt(-totals.unallocated)} over`;
+    }
   }
 }
 
-/** After any hours edit: recompute the row, its week, code totals, and summary. */
+/** After any hours edit: recompute the day, its week, code totals, and summary. */
 function refreshAfterEdit(dateISO, weekIndex) {
-  refreshRow(dateISO);
+  refreshDay(dateISO);
   renderWeekTotals(weekIndex);
   const totals = renderSummary();
   refreshCodeTotals(totals);
@@ -274,7 +363,7 @@ function numberInput({ value, className, ariaLabel, min = 0 }) {
   const input = document.createElement('input');
   input.type = 'number';
   input.className = className;
-  input.step = '0.25';
+  input.step = '0.1';
   input.min = String(min);
   input.inputMode = 'decimal';
   input.setAttribute('aria-label', ariaLabel);
@@ -283,145 +372,287 @@ function numberInput({ value, className, ariaLabel, min = 0 }) {
   return input;
 }
 
-function buildDayRow(dateISO, weekIndex) {
-  const period = activePeriod();
-  const day = store.peekDay(state(), activeStart(), dateISO) || store.emptyDay();
+/** Cells of one day column, tagged so weekend/today shading follows them down. */
+function dayCell(dateISO, className) {
+  const cell = document.createElement('td');
+  cell.className = className ? `grid__cell ${className}` : 'grid__cell';
+  cell.dataset.date = dateISO;
+  if (isWeekend(dateISO)) cell.classList.add('col--weekend');
+  if (dateISO === todayISO()) cell.classList.add('col--today');
+  return cell;
+}
+
+/** Every grid row opens with a label cell on the left. */
+function gridRow(className, label) {
   const row = document.createElement('tr');
-  row.className = 'day';
-  if (isWeekend(dateISO)) row.classList.add('day--weekend');
-  if (dateISO === todayISO()) row.classList.add('day--today');
+  row.className = className;
+  const th = document.createElement('th');
+  th.scope = 'row';
+  th.className = 'grid__label';
+  if (typeof label === 'string') th.textContent = label;
+  else th.append(label);
+  row.append(th);
+  return row;
+}
 
-  // Date
-  const dateCell = document.createElement('th');
-  dateCell.scope = 'row';
-  const dateWrap = document.createElement('span');
-  dateWrap.className = 'day-date';
-  const dow = document.createElement('span');
-  dow.className = 'day-date__dow';
-  dow.textContent = weekdayShort(dateISO);
-  const dateText = document.createElement('span');
-  dateText.className = 'day-date__date';
-  dateText.textContent = formatShort(dateISO);
-  dateWrap.append(dow, dateText);
-  dateCell.append(dateWrap);
-  row.append(dateCell);
+/** Closes a grid row with its week total. `key` omitted means nothing to total. */
+function totalCell(weekIndex, key) {
+  const cell = document.createElement('td');
+  cell.className = 'grid__total';
+  if (key) {
+    cell.dataset.total = `${weekIndex}:${key}`;
+    totalCells.set(cell.dataset.total, cell);
+  }
+  return cell;
+}
 
-  const onTimeInput = (field) => (event) => {
-    store.getDay(state(), activeStart(), dateISO)[field] = event.target.value;
-    touch();
-    refreshAfterEdit(dateISO, weekIndex);
-  };
-
-  // Start / end
-  for (const field of ['start', 'end']) {
-    const cell = document.createElement('td');
+function buildTimeRow(dates, weekIndex, label, field) {
+  const row = gridRow('grid__row', label);
+  for (const dateISO of dates) {
+    const day = store.peekDay(state(), activeStart(), dateISO) || store.emptyDay();
+    const cell = dayCell(dateISO);
     const input = document.createElement('input');
     input.type = 'time';
     input.className = 'time-input';
     input.value = day[field] || '';
-    input.setAttribute('aria-label', `${field === 'start' ? 'Start' : 'End'} time ${dateISO}`);
-    input.addEventListener('input', onTimeInput(field));
+    input.setAttribute('aria-label', `${label} time ${dateISO}`);
+    input.addEventListener('input', (event) => {
+      store.getDay(state(), activeStart(), dateISO)[field] = event.target.value;
+      touch();
+      refreshAfterEdit(dateISO, weekIndex);
+    });
     cell.append(input);
     row.append(cell);
   }
+  row.append(totalCell(weekIndex));
+  return row;
+}
 
-  // Break
-  const breakCell = document.createElement('td');
-  breakCell.className = 'num';
-  const breakInput = numberInput({
-    value: toNumber(day.breakHours),
-    className: 'hours-input',
-    ariaLabel: `Break hours ${dateISO}`,
-  });
-  breakInput.addEventListener('input', (event) => {
-    store.getDay(state(), activeStart(), dateISO).breakHours = toNumber(event.target.value);
-    touch();
-    refreshAfterEdit(dateISO, weekIndex);
-  });
-  breakCell.append(breakInput);
-  row.append(breakCell);
-
-  // Worked (computed)
-  const workedCell = document.createElement('td');
-  workedCell.className = 'num worked';
-  const workedValue = document.createElement('span');
-  const overnight = document.createElement('span');
-  overnight.className = 'worked__overnight';
-  overnight.textContent = 'overnight';
-  overnight.hidden = true;
-  workedCell.append(workedValue, overnight);
-  row.append(workedCell);
-
-  // PTO
-  const ptoCell = document.createElement('td');
-  ptoCell.className = 'num';
-  const ptoInput = numberInput({
-    value: toNumber(day.pto),
-    className: 'hours-input',
-    ariaLabel: `PTO hours ${dateISO}`,
-  });
-  ptoInput.addEventListener('input', (event) => {
-    store.getDay(state(), activeStart(), dateISO).pto = Math.max(0, toNumber(event.target.value));
-    touch();
-    refreshAfterEdit(dateISO, weekIndex);
-  });
-  ptoCell.append(ptoInput);
-  row.append(ptoCell);
-
-  // One column per charge code
-  const allocInputs = [];
-  for (const code of period.codes) {
-    const cell = document.createElement('td');
-    cell.className = 'num';
+/** Break and PTO: one hours box per day, summed in the week column. */
+function buildHoursRow(dates, weekIndex, { label, key, read, write }) {
+  const row = gridRow('grid__row', label);
+  for (const dateISO of dates) {
+    const day = store.peekDay(state(), activeStart(), dateISO) || store.emptyDay();
+    const cell = dayCell(dateISO);
     const input = numberInput({
-      value: toNumber(day.alloc[code.id]),
+      value: read(day),
       className: 'hours-input',
-      ariaLabel: `${code.code} hours ${dateISO}`,
+      ariaLabel: `${label} hours ${dateISO}`,
     });
-    input.dataset.codeId = code.id;
+    input.addEventListener('input', (event) => {
+      write(store.getDay(state(), activeStart(), dateISO), toNumber(event.target.value));
+      touch();
+      refreshAfterEdit(dateISO, weekIndex);
+    });
+    cell.append(input);
+    row.append(cell);
+  }
+  row.append(totalCell(weekIndex, key));
+  return row;
+}
+
+function buildWorkedRow(dates, weekIndex) {
+  const row = gridRow('grid__row grid__row--worked', 'Worked');
+  for (const dateISO of dates) {
+    const cell = dayCell(dateISO, 'worked');
+    const value = document.createElement('span');
+    const overnight = document.createElement('span');
+    overnight.className = 'worked__overnight';
+    overnight.textContent = 'overnight';
+    overnight.hidden = true;
+    cell.append(value, overnight);
+
+    const handle = rows.get(dateISO);
+    handle.workedValue = value;
+    handle.overnight = overnight;
+    row.append(cell);
+  }
+  row.append(totalCell(weekIndex, 'worked'));
+  return row;
+}
+
+/** One charge code's row: its name on the left, then a box under each day. */
+function buildCodeRow(dates, weekIndex, code) {
+  const twinned = hasTypeTwin(code);
+  // Only a twinned regular code needs its type spelled out; overtime always
+  // carries its tag because the tag is about pay, not about which row is which.
+  const ariaName = twinned ? `${code.code} ${code.type}` : code.code;
+
+  const label = document.createElement('span');
+  label.className = 'grid__code';
+  label.title = codeDescription(code, twinned);
+
+  const name = document.createElement('span');
+  name.className = 'grid__code-name';
+  name.textContent = code.code;
+  label.append(name);
+
+  if (code.type === 'overtime' || twinned) {
+    const type = document.createElement('span');
+    type.className = `grid__code-type grid__code-type--${code.type}`;
+    type.textContent = code.type === 'overtime' ? 'OT' : 'REG';
+    name.append(' ', type);
+  }
+  if (code.label) {
+    const desc = document.createElement('span');
+    desc.className = 'grid__code-desc';
+    desc.textContent = code.label;
+    label.append(desc);
+  }
+
+  const row = gridRow('grid__row grid__row--code', label);
+  row.dataset.codeId = code.id;
+
+  for (const dateISO of dates) {
+    const cell = dayCell(dateISO, 'alloc');
+    const input = numberInput({
+      value: toNumber(dayAllocMap(dateISO)[code.id]),
+      className: 'hours-input alloc__hours',
+      ariaLabel: `${ariaName} hours ${dateISO}`,
+    });
     input.addEventListener('input', (event) => {
       lastUsedCodeId = code.id;
+      rows.get(dateISO).lastCodeId = code.id;
       store.setAllocation(state(), activeStart(), dateISO, code.id, toNumber(event.target.value));
       touch();
       refreshAfterEdit(dateISO, weekIndex);
     });
-    allocInputs.push(input);
+    rows.get(dateISO).allocInputs.set(code.id, input);
     cell.append(input);
     row.append(cell);
   }
 
-  // Balance chip + fill action
-  const statusCell = document.createElement('td');
-  const chip = document.createElement('span');
-  chip.className = 'chip chip--idle';
-  const fill = document.createElement('button');
-  fill.type = 'button';
-  fill.className = 'fill-btn';
-  fill.textContent = 'fill';
-  fill.hidden = true;
-  fill.addEventListener('click', () => {
-    const codes = activePeriod().codes;
-    if (codes.length === 0) return;
-    const target = codes.find((code) => code.id === lastUsedCodeId) || codes[0];
-    const day2 = store.getDay(state(), activeStart(), dateISO);
-    const next = round2(toNumber(day2.alloc[target.id]) + dayVariance(day2));
-    store.setAllocation(state(), activeStart(), dateISO, target.id, next);
-    const input = allocInputs.find((el) => el.dataset.codeId === target.id);
-    if (input) input.value = next === 0 ? '' : String(next);
-    touch();
-    refreshAfterEdit(dateISO, weekIndex);
-    showToast(`Filled ${target.code} on ${formatShort(dateISO)}.`);
-  });
-  statusCell.append(chip, fill);
-  row.append(statusCell);
-
-  rows.set(dateISO, { row, workedValue, overnight, chip, fill, allocInputs });
+  row.append(totalCell(weekIndex, `code:${code.id}`));
   return row;
 }
 
+/** Fill tops up the code last touched on this day, else the one last used
+    anywhere, else the first code in the period. */
+function fillTarget(handle) {
+  if (handle.lastCodeId && handle.allocInputs.has(handle.lastCodeId)) return handle.lastCodeId;
+  if (lastUsedCodeId && handle.allocInputs.has(lastUsedCodeId)) return lastUsedCodeId;
+  const first = activePeriod().codes[0];
+  return first ? first.id : null;
+}
+
+function fillDay(dateISO, weekIndex) {
+  const handle = rows.get(dateISO);
+  const current = store.getDay(state(), activeStart(), dateISO);
+  const variance = dayVariance(current);
+  if (Math.abs(variance) < 0.005) return;
+
+  const codeId = fillTarget(handle);
+  if (!codeId) return;
+
+  const next = round2(toNumber(current.alloc[codeId]) + variance);
+  store.setAllocation(state(), activeStart(), dateISO, codeId, next);
+  const input = handle.allocInputs.get(codeId);
+  if (input) input.value = next === 0 ? '' : String(next);
+  handle.lastCodeId = codeId;
+  lastUsedCodeId = codeId;
+  touch();
+  refreshAfterEdit(dateISO, weekIndex);
+  const code = codeById(codeId);
+  showToast(`Filled ${code ? codeName(code) : 'charge code'} on ${formatShort(dateISO)}.`);
+}
+
+function buildBalanceRow(dates, weekIndex) {
+  const row = gridRow('grid__row grid__row--balance', 'Balance');
+  for (const dateISO of dates) {
+    const cell = dayCell(dateISO, 'balance');
+    const chip = document.createElement('span');
+    chip.className = 'chip chip--idle';
+    const fill = document.createElement('button');
+    fill.type = 'button';
+    fill.className = 'fill-btn';
+    fill.textContent = 'fill';
+    fill.hidden = true;
+    fill.setAttribute('aria-label', `Fill unallocated hours on ${dateISO}`);
+    fill.addEventListener('click', () => fillDay(dateISO, weekIndex));
+    cell.append(chip, fill);
+
+    const handle = rows.get(dateISO);
+    handle.chip = chip;
+    handle.fill = fill;
+    row.append(cell);
+  }
+
+  const cell = totalCell(weekIndex, 'balance');
+  const weekChip = document.createElement('span');
+  weekChip.className = 'chip chip--idle';
+  cell.append(weekChip);
+  row.append(cell);
+  return row;
+}
+
+/** The header row: one column per day of the week. */
+function buildHeadRow(dates) {
+  const row = document.createElement('tr');
+  const corner = document.createElement('th');
+  corner.scope = 'col';
+  corner.className = 'grid__corner';
+  const cornerText = document.createElement('span');
+  cornerText.className = 'visually-hidden';
+  cornerText.textContent = 'Entry';
+  corner.append(cornerText);
+  row.append(corner);
+
+  for (const dateISO of dates) {
+    const th = document.createElement('th');
+    th.scope = 'col';
+    th.className = 'grid__day';
+    th.dataset.date = dateISO;
+    if (isWeekend(dateISO)) th.classList.add('col--weekend');
+    if (dateISO === todayISO()) th.classList.add('col--today');
+
+    const dow = document.createElement('span');
+    dow.className = 'grid__day-dow';
+    dow.textContent = weekdayShort(dateISO);
+    const date = document.createElement('span');
+    date.className = 'grid__day-date';
+    date.textContent = formatShort(dateISO);
+    th.append(dow, date);
+    row.append(th);
+  }
+
+  const total = document.createElement('th');
+  total.scope = 'col';
+  total.className = 'grid__total-head';
+  total.textContent = 'Week';
+  row.append(total);
+  return row;
+}
+
+/** Column widths: a fixed label column, seven even days, a fixed total. */
+function buildColgroup() {
+  const group = document.createElement('colgroup');
+  const label = document.createElement('col');
+  label.className = 'grid__col-label';
+  group.append(label);
+  for (let i = 0; i < 7; i += 1) {
+    const col = document.createElement('col');
+    col.className = 'grid__col-day';
+    group.append(col);
+  }
+  const total = document.createElement('col');
+  total.className = 'grid__col-total';
+  group.append(total);
+  return group;
+}
+
 function buildWeek(weekIndex) {
-  const period = activePeriod();
   const dates = periodDays(activeStart()).slice(weekIndex * 7, weekIndex * 7 + 7);
+  for (const dateISO of dates) {
+    rows.set(dateISO, {
+      weekIndex,
+      workedValue: null,
+      overnight: null,
+      chip: null,
+      fill: null,
+      allocInputs: new Map(),
+      lastCodeId: null,
+    });
+  }
 
   const section = document.createElement('section');
   section.className = 'week';
@@ -443,33 +674,50 @@ function buildWeek(weekIndex) {
   const scroll = document.createElement('div');
   scroll.className = 'table-scroll';
   const table = document.createElement('table');
-  table.className = 'days';
+  table.className = 'grid';
+  table.append(buildColgroup());
 
   const thead = document.createElement('thead');
-  const headRow = document.createElement('tr');
-  const headings = [
-    { text: 'Day', num: false },
-    { text: 'Start', num: false },
-    { text: 'End', num: false },
-    { text: 'Break', num: true },
-    { text: 'Worked', num: true },
-    { text: 'PTO', num: true },
-    ...period.codes.map((code) => ({ text: code.code, num: true })),
-    { text: 'Balance', num: false },
-  ];
-  for (const heading of headings) {
-    const th = document.createElement('th');
-    th.scope = 'col';
-    th.textContent = heading.text;
-    if (heading.num) th.className = 'num';
-    headRow.append(th);
-  }
-  thead.append(headRow);
+  thead.append(buildHeadRow(dates));
   table.append(thead);
 
-  const tbody = document.createElement('tbody');
-  for (const dateISO of dates) tbody.append(buildDayRow(dateISO, weekIndex));
-  table.append(tbody);
+  // Three bands: the times that produce worked hours, the charge codes those
+  // hours go to, and what is left over.
+  const times = document.createElement('tbody');
+  times.className = 'grid__band';
+  times.append(
+    buildTimeRow(dates, weekIndex, 'Start', 'start'),
+    buildTimeRow(dates, weekIndex, 'End', 'end'),
+    buildHoursRow(dates, weekIndex, {
+      label: 'Break',
+      key: 'break',
+      read: (day) => toNumber(day.breakHours),
+      write: (day, value) => { day.breakHours = value; },
+    }),
+    buildWorkedRow(dates, weekIndex),
+  );
+  table.append(times);
+
+  const codes = activePeriod().codes;
+  if (codes.length > 0) {
+    const band = document.createElement('tbody');
+    band.className = 'grid__band grid__band--codes';
+    for (const code of codes) band.append(buildCodeRow(dates, weekIndex, code));
+    table.append(band);
+  }
+
+  const foot = document.createElement('tbody');
+  foot.className = 'grid__band';
+  foot.append(
+    buildHoursRow(dates, weekIndex, {
+      label: 'PTO',
+      key: 'pto',
+      read: (day) => toNumber(day.pto),
+      write: (day, value) => { day.pto = Math.max(0, value); },
+    }),
+    buildBalanceRow(dates, weekIndex),
+  );
+  table.append(foot);
 
   scroll.append(table);
   section.append(scroll);
@@ -480,17 +728,18 @@ function renderWeeks() {
   const container = $('weeks');
   container.textContent = '';
   rows.clear();
+  totalCells.clear();
 
   if (activePeriod().codes.length === 0) {
     const note = document.createElement('p');
     note.className = 'no-codes-note';
     note.textContent =
-      'Add at least one charge code above — hours are split across codes, so the day grid needs somewhere to put them.';
+      'Add at least one charge code above — each one becomes a row in the grid below, so there is nowhere to put hours until you do.';
     container.append(note);
   }
 
   for (const weekIndex of [0, 1]) container.append(buildWeek(weekIndex));
-  for (const dateISO of periodDays(activeStart())) refreshRow(dateISO);
+  for (const dateISO of periodDays(activeStart())) refreshDay(dateISO);
   renderWeekTotals(0);
   renderWeekTotals(1);
 }
@@ -511,12 +760,29 @@ function renderHeader() {
   $('pto-label-input').value = state().ptoCodeLabel;
 }
 
-/** Full rebuild. Use after a period switch or a structural change. */
+/**
+ * Full rebuild. Use after a period switch or a structural change.
+ *
+ * A throw in here used to leave the day grid an empty panel with no hint as to
+ * why, so a failure says so on the page instead of only in the console.
+ */
 export function render() {
-  renderHeader();
-  const totals = renderSummary();
-  renderCodes(totals);
-  renderWeeks();
+  try {
+    renderHeader();
+    const totals = renderSummary();
+    renderCodes(totals);
+    renderWeeks();
+  } catch (err) {
+    console.error(err);
+    showStorageWarning(
+      'Something went wrong drawing this pay period, so what you see may be incomplete. ' +
+        'Export a JSON backup, then reload the page.',
+    );
+    const note = document.createElement('p');
+    note.className = 'no-codes-note';
+    note.textContent = `Could not draw the day grid: ${(err && err.message) || err}`;
+    $('weeks').append(note);
+  }
 }
 
 function goToPeriod(startISO) {
@@ -572,6 +838,45 @@ function wireCodeForm() {
     touch();
     render();
     showToast(`Copied ${copied} charge code${copied === 1 ? '' : 's'} from the previous period.`);
+  });
+}
+
+/**
+ * The scratch calculator at the top of the page. It shares the span rule with
+ * the day grid — including the overnight one — but touches no state: nothing it
+ * shows is saved or counted anywhere.
+ */
+function wireTimeCalc() {
+  const start = $('calc-start');
+  const end = $('calc-end');
+  const hours = $('calc-hours');
+  const note = $('calc-note');
+
+  const update = () => {
+    const span = spanHours(start.value, end.value);
+    if (span === null) {
+      hours.textContent = '—';
+      note.textContent = start.value || end.value
+        ? 'Needs both a start and an end time.'
+        : 'Enter a start and an end time.';
+      return;
+    }
+
+    hours.textContent = `${round1(span).toFixed(1)} hrs`;
+    const minutes = Math.round(span * 60);
+    const exact = `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`;
+    note.textContent = isOvernight({ start: start.value, end: end.value })
+      ? `${exact} · crosses midnight`
+      : exact;
+  };
+
+  start.addEventListener('input', update);
+  end.addEventListener('input', update);
+  $('calc-clear').addEventListener('click', () => {
+    start.value = '';
+    end.value = '';
+    update();
+    start.focus();
   });
 }
 
@@ -631,6 +936,7 @@ function wireFooter(actions) {
 export function mount(context) {
   ctx = context;
   wireHeader();
+  wireTimeCalc();
   wireCodeForm();
   wireSettings();
   wireFooter(context.actions);

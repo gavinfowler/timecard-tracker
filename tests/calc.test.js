@@ -9,7 +9,9 @@ import {
   isOvernight,
   parseTimeToHours,
   periodTotals,
+  round1,
   round2,
+  spanHours,
   totalsByCode,
   weekTotals,
 } from '../src/calc.js';
@@ -55,6 +57,27 @@ test('parseTimeToHours handles valid times and rejects junk', () => {
   assertEqual(parseTimeToHours('7:5'), null);
   assertEqual(parseTimeToHours('24:00'), null);
   assertEqual(parseTimeToHours('12:60'), null);
+});
+
+test('spanHours measures one clock time to another', () => {
+  assertEqual(spanHours('09:00', '17:00'), 8);
+  assertEqual(spanHours('07:30', '17:00'), 9.5);
+  assertEqual(spanHours('08:00', '16:20'), 8.33);
+  assertEqual(spanHours('', '17:00'), null);
+  assertEqual(spanHours('09:00', ''), null);
+  assertEqual(spanHours('nope', '17:00'), null);
+});
+
+test('spanHours reads an end at or before the start as overnight', () => {
+  assertEqual(spanHours('22:00', '06:00'), 8);
+  assertEqual(spanHours('09:00', '09:00'), 24);
+});
+
+test('round1 rounds to the tenth of an hour timecards are entered in', () => {
+  assertEqual(round1(8.33), 8.3);
+  assertEqual(round1(8.36), 8.4);
+  assertEqual(round1(9.5), 9.5);
+  assertEqual(round1('nonsense'), 0);
 });
 
 test('dayWorked subtracts the break from the span', () => {
