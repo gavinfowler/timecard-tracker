@@ -12,8 +12,12 @@
 //
 // PTO fills regular hours but never produces overtime: the 80-hour threshold is
 // evaluated against worked regular hours alone.
+//
+// The week format (see WEEK_FORMATS) says how those 80 hours are *expected* to
+// fall across the 14 days. It is a target to show progress against, nothing
+// more: no rule above reads it, and every format totals the same 80 hours.
 
-import { periodDays, weekIndexOf } from './payperiod.js';
+import { daysBetween, periodDays, weekIndexOf } from './payperiod.js';
 
 export const REGULAR_HOURS_PER_PERIOD = 80;
 
@@ -100,6 +104,81 @@ export function dayIsEmpty(day) {
   if (day.start || day.end || day.note) return false;
   if (toNumber(day.breakMinutes) !== 0 || toNumber(day.pto) !== 0) return false;
   return dayAllocated(day) === 0;
+}
+
+// --- week formats ----------------------------------------------------------
+
+/** One week of a schedule: Saturday, Sunday, then Monday through Friday. */
+function scheduleWeek(weekdayHours, fridayHours = weekdayHours) {
+  return [0, 0, weekdayHours, weekdayHours, weekdayHours, weekdayHours, fridayHours];
+}
+
+/**
+ * The shapes a 80-hour pay period can be worked in. `weeks` holds the expected
+ * hours for each day of week 1 and week 2, Saturday first — the two differ only
+ * for 9/80, where one Friday is off and the other is a short day.
+ */
+export const WEEK_FORMATS = [
+  {
+    id: '5x8',
+    label: '5 × 8-hour days',
+    hint: 'Monday to Friday, 8 hours each.',
+    weeks: [scheduleWeek(8), scheduleWeek(8)],
+  },
+  {
+    id: '4x10',
+    label: '4 × 10-hour days',
+    hint: 'Monday to Thursday, 10 hours each. Fridays off.',
+    weeks: [scheduleWeek(10, 0), scheduleWeek(10, 0)],
+  },
+  {
+    id: '9/80a',
+    label: '9/80 A — first Friday off',
+    hint: '9 hours Monday to Thursday. The first Friday is off; the second is 8 hours.',
+    weeks: [scheduleWeek(9, 0), scheduleWeek(9, 8)],
+  },
+  {
+    id: '9/80b',
+    label: '9/80 B — second Friday off',
+    hint: '9 hours Monday to Thursday. The first Friday is 8 hours; the second is off.',
+    weeks: [scheduleWeek(9, 8), scheduleWeek(9, 0)],
+  },
+];
+
+export const DEFAULT_WEEK_FORMAT = WEEK_FORMATS[0].id;
+
+/** The named format, falling back to the default rather than throwing. */
+export function weekFormatById(formatId) {
+  return WEEK_FORMATS.find((format) => format.id === formatId) || WEEK_FORMATS[0];
+}
+
+/** Expected hours on day `dayIndex` (0–13) of a period. */
+export function scheduledHours(formatId, dayIndex) {
+  const format = weekFormatById(formatId);
+  const week = format.weeks[Math.floor(dayIndex / 7)];
+  if (!week) return 0;
+  return week[dayIndex % 7] ?? 0;
+}
+
+/** Expected hours on a date, which must be inside the period at `startISO`. */
+export function scheduledHoursOn(formatId, startISO, dateISO) {
+  return scheduledHours(formatId, daysBetween(startISO, dateISO));
+}
+
+export function scheduledWeekHours(formatId, weekIndex) {
+  return round2(weekFormatById(formatId).weeks[weekIndex].reduce((sum, hours) => sum + hours, 0));
+}
+
+export function scheduledPeriodHours(formatId) {
+  return round2(scheduledWeekHours(formatId, 0) + scheduledWeekHours(formatId, 1));
+}
+
+/**
+ * Hours that count against a day's scheduled hours. PTO counts: a day off on
+ * leave is a day met, not a day eight hours short.
+ */
+export function dayCredited(day) {
+  return round2(dayWorked(day) + dayPTO(day));
 }
 
 function codeTypeMap(period) {

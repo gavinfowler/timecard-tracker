@@ -1,7 +1,10 @@
-import { assert, assertClose, assertEqual, test } from './runner.js';
+import { assert, assertClose, assertDeepEqual, assertEqual, test } from './runner.js';
 import {
+  DEFAULT_WEEK_FORMAT,
   REGULAR_HOURS_PER_PERIOD,
+  WEEK_FORMATS,
   dayAllocated,
+  dayCredited,
   dayIsEmpty,
   dayPTO,
   dayVariance,
@@ -11,8 +14,13 @@ import {
   periodTotals,
   round1,
   round2,
+  scheduledHours,
+  scheduledHoursOn,
+  scheduledPeriodHours,
+  scheduledWeekHours,
   spanHours,
   totalsByCode,
+  weekFormatById,
   weekTotals,
 } from '../src/calc.js';
 import { periodDays } from '../src/payperiod.js';
@@ -123,6 +131,67 @@ test('dayIsEmpty distinguishes untouched days from PTO-only days', () => {
   assert(dayIsEmpty({ start: '', end: '', breakMinutes: 0, pto: 0, note: '', alloc: {} }));
   assert(!dayIsEmpty({ start: '', end: '', breakMinutes: 0, pto: 8, note: '', alloc: {} }));
   assert(!dayIsEmpty({ start: '09:00', end: '', breakMinutes: 0, pto: 0, note: '', alloc: {} }));
+});
+
+// --- week formats ----------------------------------------------------------
+
+/** The scheduled hours for all 14 days of a period, Saturday first. */
+function schedule(formatId) {
+  return DAYS.map((_, index) => scheduledHours(formatId, index));
+}
+
+test('every week format adds up to the same 80-hour pay period', () => {
+  for (const format of WEEK_FORMATS) {
+    assertEqual(scheduledPeriodHours(format.id), REGULAR_HOURS_PER_PERIOD, format.id);
+  }
+});
+
+test('5 × 8 is eight hours Monday to Friday, both weeks', () => {
+  assertDeepEqual(schedule('5x8'), [0, 0, 8, 8, 8, 8, 8, 0, 0, 8, 8, 8, 8, 8]);
+  assertEqual(scheduledWeekHours('5x8', 0), 40);
+  assertEqual(scheduledWeekHours('5x8', 1), 40);
+});
+
+test('4 × 10 is ten hours Monday to Thursday, with Fridays off', () => {
+  assertDeepEqual(schedule('4x10'), [0, 0, 10, 10, 10, 10, 0, 0, 0, 10, 10, 10, 10, 0]);
+  assertEqual(scheduledWeekHours('4x10', 0), 40);
+});
+
+test('9/80 A takes the first Friday off and works the second', () => {
+  assertDeepEqual(schedule('9/80a'), [0, 0, 9, 9, 9, 9, 0, 0, 0, 9, 9, 9, 9, 8]);
+  assertEqual(scheduledWeekHours('9/80a', 0), 36);
+  assertEqual(scheduledWeekHours('9/80a', 1), 44);
+});
+
+test('9/80 B is 9/80 A with the Fridays swapped', () => {
+  assertDeepEqual(schedule('9/80b'), [0, 0, 9, 9, 9, 9, 8, 0, 0, 9, 9, 9, 9, 0]);
+  assertEqual(scheduledWeekHours('9/80b', 0), 44);
+  assertEqual(scheduledWeekHours('9/80b', 1), 36);
+});
+
+test('scheduled hours can be asked for by date', () => {
+  assertEqual(scheduledHoursOn('5x8', START, START), 0, 'the period opens on a Saturday');
+  assertEqual(scheduledHoursOn('5x8', START, DAYS[2]), 8, 'Monday');
+  assertEqual(scheduledHoursOn('9/80a', START, DAYS[6]), 0, 'the first Friday is off');
+  assertEqual(scheduledHoursOn('9/80a', START, DAYS[13]), 8, 'the second Friday is short');
+});
+
+test('an unknown week format falls back to the default instead of throwing', () => {
+  assertEqual(weekFormatById('nonsense').id, DEFAULT_WEEK_FORMAT);
+  assertEqual(weekFormatById(undefined).id, DEFAULT_WEEK_FORMAT);
+  assertEqual(scheduledHours('nonsense', 2), 8, 'and still reports the default schedule');
+});
+
+test('a date outside the period is scheduled for nothing', () => {
+  assertEqual(scheduledHours('5x8', 14), 0);
+  assertEqual(scheduledHours('5x8', -1), 0);
+});
+
+test('PTO counts toward the day it is taken on', () => {
+  assertEqual(dayCredited({ start: '09:00', end: '17:00', breakMinutes: 0 }), 8);
+  assertEqual(dayCredited({ start: '', end: '', pto: 8 }), 8, 'a full leave day still meets it');
+  assertEqual(dayCredited({ start: '09:00', end: '13:00', pto: 4 }), 8, 'half worked, half leave');
+  assertEqual(dayCredited({}), 0);
 });
 
 test('PTO is clamped at zero', () => {

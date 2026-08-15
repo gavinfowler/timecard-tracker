@@ -9,6 +9,7 @@ function makeState() {
     anchorPeriodStart: START,
     activePeriodStart: START,
     ptoCodeLabel: 'LEAVE-01',
+    weekFormat: '9/80a',
     periods: {
       [START]: {
         codes: [

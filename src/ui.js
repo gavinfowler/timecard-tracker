@@ -11,8 +11,10 @@
 
 import {
   REGULAR_HOURS_PER_PERIOD,
+  WEEK_FORMATS,
   dayAllocated,
   dayBreakMinutes,
+  dayCredited,
   dayPTO,
   dayVariance,
   dayWorked,
@@ -20,9 +22,12 @@ import {
   periodTotals,
   round1,
   round2,
+  scheduledHoursOn,
+  scheduledWeekHours,
   spanHours,
   toNumber,
   totalsByCode,
+  weekFormatById,
   weekTotals,
 } from './calc.js';
 import {
@@ -69,6 +74,20 @@ function activeStart() {
 
 function activePeriod() {
   return store.getPeriod(ctx.state, activeStart());
+}
+
+function weekFormat() {
+  return weekFormatById(ctx.state.weekFormat);
+}
+
+/** The hours this date is scheduled for under the configured week format. */
+function scheduledOn(dateISO) {
+  return scheduledHoursOn(weekFormat().id, activeStart(), dateISO);
+}
+
+/** Targets are whole or half hours, so they read better without the .00. */
+function fmtTarget(hours) {
+  return round2(hours) % 1 === 0 ? String(round2(hours)) : fmt(hours);
 }
 
 function touch() {
@@ -269,6 +288,21 @@ function refreshDay(dateISO) {
   handle.workedValue.textContent = fmt(worked);
   handle.overnight.hidden = !isOvernight(day);
 
+  // Progress against what the week format expects of this day. PTO counts, so
+  // a day taken as leave reads as met rather than as a day eight hours short.
+  const scheduled = scheduledOn(dateISO);
+  const credited = dayCredited(day);
+  const target = handle.target;
+  target.className = 'worked__target';
+  if (scheduled === 0) {
+    target.textContent = credited > 0 ? 'not scheduled' : 'off';
+    target.classList.add(credited > 0 ? 'worked__target--extra' : 'worked__target--off');
+  } else {
+    target.textContent = `of ${fmtTarget(scheduled)}`;
+    if (credited >= scheduled - 0.005) target.classList.add('worked__target--met');
+    else if (credited > 0) target.classList.add('worked__target--short');
+  }
+
   const variance = dayVariance(day);
   const allocated = dayAllocated(day);
   const chip = handle.chip;
@@ -313,6 +347,7 @@ function renderWeekTotals(weekIndex) {
     const worked = document.createElement('strong');
     worked.textContent = fmt(totals.worked);
     el.append('Worked ', worked);
+    el.append(` of ${fmtTarget(scheduledWeekHours(weekFormat().id, weekIndex))}`);
 
     if (totals.P > 0) el.append(` · PTO ${fmt(totals.P)}`);
     if (Math.abs(totals.unallocated) >= 0.005) {
@@ -466,14 +501,18 @@ function buildWorkedRow(dates, weekIndex) {
   for (const dateISO of dates) {
     const cell = dayCell(dateISO, 'worked');
     const value = document.createElement('span');
+    // Filled by refreshDay: how the day stands against its scheduled hours.
+    const target = document.createElement('span');
+    target.className = 'worked__target';
     const overnight = document.createElement('span');
     overnight.className = 'worked__overnight';
     overnight.textContent = 'overnight';
     overnight.hidden = true;
-    cell.append(value, overnight);
+    cell.append(value, target, overnight);
 
     const handle = rows.get(dateISO);
     handle.workedValue = value;
+    handle.target = target;
     handle.overnight = overnight;
     row.append(cell);
   }
@@ -656,6 +695,7 @@ function buildWeek(weekIndex) {
     rows.set(dateISO, {
       weekIndex,
       workedValue: null,
+      target: null,
       overnight: null,
       chip: null,
       fill: null,
@@ -771,6 +811,20 @@ function renderHeader() {
 
   $('anchor-input').value = state().anchorPeriodStart;
   $('pto-label-input').value = state().ptoCodeLabel;
+  $('week-format-input').value = weekFormat().id;
+  $('week-format-hint').textContent = weekFormat().hint;
+}
+
+/** The week-format menu is built from calc.js so the two can't drift apart. */
+function buildWeekFormatOptions() {
+  const select = $('week-format-input');
+  select.textContent = '';
+  for (const format of WEEK_FORMATS) {
+    const option = document.createElement('option');
+    option.value = format.id;
+    option.textContent = format.label;
+    select.append(option);
+  }
 }
 
 /**
@@ -908,6 +962,14 @@ function wireSettings() {
     }
   });
 
+  $('week-format-input').addEventListener('change', (event) => {
+    const format = weekFormatById(event.target.value);
+    state().weekFormat = format.id;
+    touch();
+    render();
+    showToast(`Week format set to ${format.label}.`);
+  });
+
   $('pto-label-input').addEventListener('input', (event) => {
     state().ptoCodeLabel = event.target.value.trim() || 'PTO';
     touch();
@@ -948,6 +1010,7 @@ function wireFooter(actions) {
 
 export function mount(context) {
   ctx = context;
+  buildWeekFormatOptions();
   wireHeader();
   wireTimeCalc();
   wireCodeForm();

@@ -4,7 +4,9 @@ A single-page timecard tracker for two-week pay periods that run **Saturday → 
 with **80 regular hours**. Each week is a grid of days across by charge codes down:
 enter each day's start, end, and break (in minutes); charge those hours to any of your
 codes in tenth-of-an-hour steps; log PTO; and watch regular, overtime, and remaining
-hours update live. It assumes a desktop-width window.
+hours update live. Every day shows what it worked against the hours your week format —
+5 × 8, 4 × 10, or either half of a 9/80 — expects of it. It assumes a desktop-width
+window.
 
 No build step, no dependencies, no server. Everything is stored in your browser's
 local storage — nothing is uploaded anywhere.
@@ -28,8 +30,25 @@ local storage — nothing is uploaded anywhere.
   (`0.1`); the break goes in as whole **minutes** (`30`), since that is how breaks are
   actually taken. A balance chip per day shows `✓ balanced`, `N unallocated`, or `N
   over worked`, with a **fill** button to dump the remainder into that day's code.
+- **Hours worked per day, against a target** — every day reports what it worked and
+  what your **week format** expects of it (`8.75` / `of 9`): green once the day is met,
+  amber while it is short, and `off` on a day the schedule doesn't work. PTO counts
+  toward the target, so a leave day reads as met rather than as a day missed. Hours on
+  a scheduled day off are called out as `not scheduled` — usually where overtime starts.
+- **Week formats** — pick the shape your 80 hours are worked in (Settings → Week format):
+
+  | Format | Mon–Thu | First Friday | Second Friday | Weeks |
+  | --- | --- | --- | --- | --- |
+  | 5 × 8-hour days | 8 | 8 | 8 | 40 + 40 |
+  | 4 × 10-hour days | 10 | off | off | 40 + 40 |
+  | 9/80 A | 9 | off | 8 | 36 + 44 |
+  | 9/80 B | 9 | 8 | off | 44 + 36 |
+
+  All four total 80 hours a period. The format is a **target only** — it changes what
+  each day is compared against, never how regular, overtime, or PTO are worked out.
 - **Week totals** — a right-hand column totals every row of the matrix: break (minutes),
-  worked, each charge code, PTO, and what the week still has unallocated.
+  worked, each charge code, PTO, and what the week still has unallocated. The week
+  heading reads worked against the week's scheduled hours (`Worked 36.00 of 44`).
 - **Live totals** — regular (of 80), overtime, PTO, remaining, and total paid, plus
   a progress bar and per-code period totals.
 - **PTO** — entered per day, counts toward the 80 regular hours, never creates overtime.
@@ -61,6 +80,9 @@ Consequences worth knowing:
   "over 80" note rather than silently capped.
 - A day whose end time is at or before its start time is treated as an **overnight
   shift** and the row is labelled accordingly.
+- **The week format changes none of this.** Working a 9/80 Friday that the schedule
+  has off is flagged on the day, but whether those hours are overtime still comes
+  down to the code they are charged to and the 80-hour period total.
 
 ## Running it locally
 

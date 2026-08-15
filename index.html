@@ -146,6 +146,12 @@
           <p class="field__hint" id="anchor-hint">Must be a Saturday; other dates snap back to the Saturday before.</p>
         </div>
         <div class="field">
+          <label for="week-format-input">Week format</label>
+          <!-- Options come from WEEK_FORMATS in calc.js, filled in on mount. -->
+          <select id="week-format-input"></select>
+          <p class="field__hint" id="week-format-hint">How your 80 hours are meant to fall across the two weeks.</p>
+        </div>
+        <div class="field">
           <label for="pto-label-input">PTO code used in exports</label>
           <input type="text" id="pto-label-input" placeholder="PTO" autocomplete="off">
           <p class="field__hint">Your employer's leave code, if it isn't just "PTO".</p>

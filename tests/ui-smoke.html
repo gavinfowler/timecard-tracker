@@ -80,6 +80,7 @@ try {
     return el;
   };
   const worked = (date) => cell(date, '.worked').querySelector('span').textContent;
+  const target = (date) => cell(date, '.worked').querySelector('.worked__target').textContent;
   const chip = (date) => cell(date, '.balance').querySelector('.chip').textContent;
   const fillBtn = (date) => cell(date, '.balance').querySelector('.fill-btn');
   const total = (weekIndex, key) => q(`[data-total="${weekIndex}:${key}"]`).textContent;
@@ -188,7 +189,7 @@ try {
   check('remaining stat', text('stat-remaining'), '74.00');
   check('total paid', text('stat-total'), '9.00');
   check('per-code chip total', q('[data-code-total]').textContent, '6.00 hrs');
-  check('week 1 totals', q('[data-week-totals="0"]').textContent, 'Worked 9.00');
+  check('week 1 totals', q('[data-week-totals="0"]').textContent, 'Worked 9.00 of 40');
 
   // over-allocation
   setVal(q(`input[aria-label="PROJ-A hours ${D}"]`), '8');
@@ -322,6 +323,53 @@ try {
   check('csv keeps the twins on separate rows',
     twinCsv.filter((r) => r.startsWith(`${D},Mon,PROJ-A,`)).join(' | '),
     `${D},Mon,PROJ-A,regular,6.00 | ${D},Mon,PROJ-A,overtime,2.00`);
+
+  // --- week formats -------------------------------------------------------
+  const setSel = (el, value) => { el.value = value; fire(el, 'change'); };
+  const fmtSel = $('week-format-input');
+  check('every week format is offered', fmtSel.options.length, 4);
+  check('the default is five eight-hour days', fmtSel.value, '5x8');
+  check('the hint describes it', text('week-format-hint'), 'Monday to Friday, 8 hours each.');
+
+  // Read the targets on an empty period, where no entered hours colour them.
+  $('next-period').click();
+  const SAT = '2026-08-15';
+  const MON = '2026-08-17';
+  const FRI_A = '2026-08-21'; // Friday of week 1
+  const FRI_B = '2026-08-28'; // Friday of week 2
+
+  check('weekends are never scheduled', target(SAT), 'off');
+  check('5x8 targets eight hours on a weekday', target(MON), 'of 8');
+  check('5x8 works both Fridays', `${target(FRI_A)} / ${target(FRI_B)}`, 'of 8 / of 8');
+
+  setSel(fmtSel, '4x10');
+  check('4x10 targets ten hours', target(MON), 'of 10');
+  check('4x10 takes both Fridays off', `${target(FRI_A)} / ${target(FRI_B)}`, 'off / off');
+
+  setSel(fmtSel, '9/80a');
+  check('9/80 A targets nine hours', target(MON), 'of 9');
+  check('9/80 A takes the first Friday off', `${target(FRI_A)} / ${target(FRI_B)}`, 'off / of 8');
+  check('9/80 A week 1 target', q('[data-week-totals="0"]').textContent, 'Worked 0.00 of 36');
+  check('9/80 A week 2 target', q('[data-week-totals="1"]').textContent, 'Worked 0.00 of 44');
+
+  setSel(fmtSel, '9/80b');
+  check('9/80 B flips the Fridays', `${target(FRI_A)} / ${target(FRI_B)}`, 'of 8 / off');
+
+  // Hours on a day the schedule has off are called out, not counted as met.
+  setVal(q(`input[aria-label="Start time ${FRI_B}"]`), '09:00');
+  setVal(q(`input[aria-label="End time ${FRI_B}"]`), '13:00');
+  check('working an off day is flagged', target(FRI_B), 'not scheduled');
+  check('and the day still shows its hours', worked(FRI_B), '4.00');
+
+  // PTO meets a day's target the same as working it does.
+  setVal(q(`input[aria-label="PTO hours ${MON}"]`), '9');
+  check('a leave day counts as met', target(MON), 'of 9');
+  check('and reads as met, not short',
+    cell(MON, '.worked').querySelector('.worked__target').className,
+    'worked__target worked__target--met');
+
+  store.flushSave(ctx.state);
+  check('the week format is saved', store.loadState().weekFormat, '9/80b');
 } catch (err) {
   failures += 1;
   log.push(`FAIL  threw: ${err && err.stack ? err.stack : err}`);

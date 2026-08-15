@@ -1,4 +1,5 @@
 import { assertEqual, test } from './runner.js';
+import { DEFAULT_WEEK_FORMAT } from '../src/calc.js';
 import { STATE_VERSION, normalizeState } from '../src/state.js';
 
 const START = '2026-08-01'; // Saturday
@@ -31,4 +32,12 @@ test('a v1 day carrying decimal breakHours is migrated to minutes', () => {
 
 test('the migrated day drops the old field entirely', () => {
   assertEqual(stateWithDay({ breakHours: 0.5 }).breakHours, undefined);
+});
+
+test('the week format is kept when known and defaulted when not', () => {
+  const format = (raw) => normalizeState({ periods: {}, ...raw }).weekFormat;
+  assertEqual(format({ weekFormat: '9/80b' }), '9/80b');
+  assertEqual(format({ weekFormat: '4x10' }), '4x10');
+  assertEqual(format({ weekFormat: 'nonsense' }), DEFAULT_WEEK_FORMAT, 'unknown id');
+  assertEqual(format({}), DEFAULT_WEEK_FORMAT, 'a file written before formats existed');
 });

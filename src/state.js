@@ -1,5 +1,6 @@
 // App state: shape, defaults, normalization, and localStorage persistence.
 
+import { DEFAULT_WEEK_FORMAT, weekFormatById } from './calc.js';
 import {
   alignBackToSaturday,
   isValidISO,
@@ -35,6 +36,7 @@ export function defaultState(today = todayISO()) {
     anchorPeriodStart: anchor,
     activePeriodStart: anchor,
     ptoCodeLabel: 'PTO',
+    weekFormat: DEFAULT_WEEK_FORMAT,
     periods: {},
   };
 }
@@ -131,6 +133,9 @@ export function normalizeState(raw) {
     anchorPeriodStart: anchor,
     activePeriodStart: active,
     ptoCodeLabel: String(raw.ptoCodeLabel ?? '').trim() || 'PTO',
+    // An unknown format falls back to the default rather than leaving every day
+    // without a target. A file written before week formats existed has none.
+    weekFormat: weekFormatById(raw.weekFormat).id,
     periods,
   };
 }

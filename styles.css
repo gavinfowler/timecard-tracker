@@ -148,7 +148,8 @@ h2 { font-size: 1.05rem; }
 input[type="text"],
 input[type="time"],
 input[type="date"],
-input[type="number"] {
+input[type="number"],
+select {
   font: inherit;
   padding: 0.35rem 0.5rem;
   border: 1px solid var(--border-strong);
@@ -159,6 +160,7 @@ input[type="number"] {
 }
 
 input:focus-visible,
+select:focus-visible,
 button:focus-visible,
 .btn:focus-visible,
 a:focus-visible {
@@ -489,6 +491,19 @@ table.grid thead th {
 .grid__row--worked .grid__cell { font-weight: 650; }
 .grid__total { background: color-mix(in srgb, var(--surface-alt) 55%, transparent); }
 .grid__total--zero { color: var(--text-muted); }
+
+/* How the day stands against the week format's target for it. */
+.worked__target {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.worked__target--met { color: var(--ok); }
+.worked__target--short { color: var(--warn); }
+/* Hours on a day the schedule has off — usually where overtime comes from. */
+.worked__target--extra { color: var(--ot); }
+.worked__target--off { opacity: 0.65; font-weight: 400; }
 
 .worked__overnight {
   display: block;
