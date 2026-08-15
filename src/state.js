@@ -10,7 +10,9 @@ import {
 const STORAGE_KEY = 'timecard-tracker/v1';
 const SAVE_DELAY_MS = 200;
 
-export const STATE_VERSION = 1;
+// v2 stores the daily break in whole minutes (`breakMinutes`); v1 stored it as
+// decimal hours (`breakHours`). normalizeDay migrates the old field on read.
+export const STATE_VERSION = 2;
 
 let saveTimer = null;
 let storageWarning = '';
@@ -38,11 +40,23 @@ export function defaultState(today = todayISO()) {
 }
 
 export function emptyDay() {
-  return { start: '', end: '', breakHours: 0, pto: 0, note: '', alloc: {} };
+  return { start: '', end: '', breakMinutes: 0, pto: 0, note: '', alloc: {} };
 }
 
 export function emptyPeriod() {
   return { codes: [], days: {} };
+}
+
+/**
+ * Break minutes, migrating a v1 day that still carries decimal `breakHours`.
+ * A 0.5-hour break comes back as 30 minutes; anything unreadable is no break.
+ */
+function readBreakMinutes(raw) {
+  const minutes = Number(raw.breakMinutes);
+  if (Number.isFinite(minutes)) return Math.max(0, Math.round(minutes));
+  const hours = Number(raw.breakHours);
+  if (Number.isFinite(hours)) return Math.max(0, Math.round(hours * 60));
+  return 0;
 }
 
 function normalizeDay(raw) {
@@ -51,7 +65,7 @@ function normalizeDay(raw) {
   day.start = typeof raw.start === 'string' ? raw.start : '';
   day.end = typeof raw.end === 'string' ? raw.end : '';
   day.note = typeof raw.note === 'string' ? raw.note : '';
-  day.breakHours = Number(raw.breakHours) || 0;
+  day.breakMinutes = readBreakMinutes(raw);
   day.pto = Number(raw.pto) || 0;
   if (raw.alloc && typeof raw.alloc === 'object') {
     for (const [codeId, hours] of Object.entries(raw.alloc)) {

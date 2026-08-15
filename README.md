@@ -2,9 +2,9 @@
 
 A single-page timecard tracker for two-week pay periods that run **Saturday → Friday**
 with **80 regular hours**. Each week is a grid of days across by charge codes down:
-enter each day's start, end, and break; charge those hours to any of your codes in
-tenth-of-an-hour steps; log PTO; and watch regular, overtime, and remaining hours
-update live. It assumes a desktop-width window.
+enter each day's start, end, and break (in minutes); charge those hours to any of your
+codes in tenth-of-an-hour steps; log PTO; and watch regular, overtime, and remaining
+hours update live. It assumes a desktop-width window.
 
 No build step, no dependencies, no server. Everything is stored in your browser's
 local storage — nothing is uploaded anywhere.
@@ -25,10 +25,11 @@ local storage — nothing is uploaded anywhere.
   the left the start/end/break/worked rows, then a row per charge code, then PTO and
   the balance. So Monday can be split two ways and Tuesday charged to something else
   entirely, and a code's week reads straight across. Hours go in in tenths of an hour
-  (`0.1`). A balance chip per day shows `✓ balanced`, `N unallocated`, or `N over
-  worked`, with a **fill** button to dump the remainder into that day's code.
-- **Week totals** — a right-hand column totals every row of the matrix: break, worked,
-  each charge code, PTO, and what the week still has unallocated.
+  (`0.1`); the break goes in as whole **minutes** (`30`), since that is how breaks are
+  actually taken. A balance chip per day shows `✓ balanced`, `N unallocated`, or `N
+  over worked`, with a **fill** button to dump the remainder into that day's code.
+- **Week totals** — a right-hand column totals every row of the matrix: break (minutes),
+  worked, each charge code, PTO, and what the week still has unallocated.
 - **Live totals** — regular (of 80), overtime, PTO, remaining, and total paid, plus
   a progress bar and per-code period totals.
 - **PTO** — entered per day, counts toward the 80 regular hours, never creates overtime.
@@ -113,6 +114,8 @@ origin serving the page. That means:
   and the Pages URL each gives you a separate, empty timecard.
 - **Export a JSON backup** before clearing site data or moving machines. Import
   replaces all local state with the file's contents.
+- Timecards saved before breaks moved to minutes are migrated when they load, whether
+  from local storage or an imported backup: a `0.5`-hour break becomes `30` minutes.
 
 ## Project layout
 

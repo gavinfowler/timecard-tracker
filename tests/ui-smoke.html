@@ -134,7 +134,10 @@ try {
   check('all charge-code boxes start blank',
     [...document.querySelectorAll('.alloc__hours')].every((i) => i.value === ''), 'true');
   check('hours step in tenths', q('.alloc__hours').step, '0.1');
-  check('break and PTO step in tenths too', q('input[aria-label^="Break hours"]').step, '0.1');
+  check('PTO steps in tenths too', q('input[aria-label^="PTO hours"]').step, '0.1');
+  check('break is entered in minutes', q('input[aria-label^="Break minutes"]').step, '5');
+  check('the break row says so', [...document.querySelectorAll('.grid__label')]
+    .some((th) => th.textContent === 'Break (min)'), 'true');
   check('overtime codes are marked on their row',
     document.querySelectorAll('.grid__code-type').length, 2);
   check('days run across the top', q('.grid thead .grid__day-dow').textContent, 'Sat');
@@ -149,13 +152,18 @@ try {
   const D = '2026-08-03'; // Monday of week 1
   setVal(q(`input[aria-label="Start time ${D}"]`), '07:30');
   setVal(q(`input[aria-label="End time ${D}"]`), '17:00');
-  setVal(q(`input[aria-label="Break hours ${D}"]`), '0.5');
+  setVal(q(`input[aria-label="Break minutes ${D}"]`), '30');
 
   check('worked hours computed', worked(D), '9.00');
   check('chip shows unallocated', chip(D), '9.00 unallocated');
   check('fill button visible', fillBtn(D).hidden, 'false');
   check('week column totals worked hours', total(0, 'worked'), '9.00');
-  check('week column totals breaks', total(0, 'break'), '0.50');
+  check('week column totals break minutes', total(0, 'break'), '30');
+
+  // A break that is not a whole tenth of an hour is still exact.
+  setVal(q(`input[aria-label="Break minutes ${D}"]`), '20');
+  check('a 20-minute break comes off the span', worked(D), '9.17');
+  setVal(q(`input[aria-label="Break minutes ${D}"]`), '30');
 
   // --- charging a day across codes ----------------------------------------
   setVal(chargeCode(D, 'PROJ-A'), '6');

@@ -55,12 +55,17 @@ export function spanHours(startValue, endValue) {
   return round2(span);
 }
 
+/** Breaks are entered in whole minutes, unlike every other figure here. */
+export function dayBreakMinutes(day) {
+  return Math.max(0, toNumber(day && day.breakMinutes));
+}
+
 /** Worked hours for one day: the span less the break, clamped at zero. */
 export function dayWorked(day) {
   if (!day) return 0;
   const span = spanHours(day.start, day.end);
   if (span === null) return 0;
-  return round2(Math.max(0, span - Math.max(0, toNumber(day.breakHours))));
+  return round2(Math.max(0, span - dayBreakMinutes(day) / 60));
 }
 
 /** True when the entry crosses midnight, so the UI can hint at it. */
@@ -93,7 +98,7 @@ export function dayPTO(day) {
 export function dayIsEmpty(day) {
   if (!day) return true;
   if (day.start || day.end || day.note) return false;
-  if (toNumber(day.breakHours) !== 0 || toNumber(day.pto) !== 0) return false;
+  if (toNumber(day.breakMinutes) !== 0 || toNumber(day.pto) !== 0) return false;
   return dayAllocated(day) === 0;
 }
 

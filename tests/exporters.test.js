@@ -5,7 +5,7 @@ const START = '2026-08-01';
 
 function makeState() {
   return {
-    version: 1,
+    version: 2,
     anchorPeriodStart: START,
     activePeriodStart: START,
     ptoCodeLabel: 'LEAVE-01',
@@ -17,14 +17,14 @@ function makeState() {
         ],
         days: {
           '2026-08-03': {
-            start: '07:30', end: '17:00', breakHours: 0.5, pto: 0, note: '',
+            start: '07:30', end: '17:00', breakMinutes: 30, pto: 0, note: '',
             alloc: { a: 6, b: 3 },
           },
           '2026-08-04': {
-            start: '', end: '', breakHours: 0, pto: 8, note: '', alloc: {},
+            start: '', end: '', breakMinutes: 0, pto: 8, note: '', alloc: {},
           },
           '2026-08-05': {
-            start: '', end: '', breakHours: 0, pto: 0, note: '', alloc: {},
+            start: '', end: '', breakMinutes: 0, pto: 0, note: '', alloc: {},
           },
         },
       },
@@ -67,7 +67,7 @@ test('CSV hours sum to the on-screen total', () => {
 test('CSV keeps hours charged to a removed code', () => {
   const state = makeState();
   state.periods[START].days['2026-08-06'] = {
-    start: '', end: '', breakHours: 0, pto: 0, note: '', alloc: { 'deleted-id': 4 },
+    start: '', end: '', breakMinutes: 0, pto: 0, note: '', alloc: { 'deleted-id': 4 },
   };
   assert(buildCSV(state, START).includes('2026-08-06,Thu,(removed code),regular,4.00'));
 });

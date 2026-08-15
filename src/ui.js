@@ -12,6 +12,7 @@
 import {
   REGULAR_HOURS_PER_PERIOD,
   dayAllocated,
+  dayBreakMinutes,
   dayPTO,
   dayVariance,
   dayWorked,
@@ -51,6 +52,11 @@ let toastTimer = null;
 
 function fmt(hours) {
   return round2(hours).toFixed(2);
+}
+
+/** Breaks are whole minutes, so they get none of the two-decimal treatment. */
+function fmtMinutes(minutes) {
+  return String(Math.round(minutes));
 }
 
 function state() {
@@ -290,11 +296,11 @@ function refreshDay(dateISO) {
 }
 
 /** A zero total reads as clutter across a 7-day row, so blanks show as a dash. */
-function setTotal(weekIndex, key, hours) {
+function setTotal(weekIndex, key, value, format = fmt) {
   const cell = totalCells.get(`${weekIndex}:${key}`);
   if (!cell) return;
-  cell.textContent = Math.abs(hours) < 0.005 ? '—' : fmt(hours);
-  cell.classList.toggle('grid__total--zero', Math.abs(hours) < 0.005);
+  cell.textContent = Math.abs(value) < 0.005 ? '—' : format(value);
+  cell.classList.toggle('grid__total--zero', Math.abs(value) < 0.005);
 }
 
 function renderWeekTotals(weekIndex) {
@@ -319,12 +325,12 @@ function renderWeekTotals(weekIndex) {
   }
 
   // The right-hand column: one week total per row of the matrix.
-  let breakHours = 0;
+  let breakMinutes = 0;
   for (const dateISO of totals.dates) {
     const day = store.peekDay(state(), activeStart(), dateISO);
-    if (day) breakHours += Math.max(0, toNumber(day.breakHours));
+    if (day) breakMinutes += dayBreakMinutes(day);
   }
-  setTotal(weekIndex, 'break', breakHours);
+  setTotal(weekIndex, 'break', breakMinutes, fmtMinutes);
   setTotal(weekIndex, 'worked', totals.worked);
   setTotal(weekIndex, 'pto', totals.P);
 
@@ -359,13 +365,13 @@ function refreshAfterEdit(dateISO, weekIndex) {
   refreshCodeTotals(totals);
 }
 
-function numberInput({ value, className, ariaLabel, min = 0 }) {
+function numberInput({ value, className, ariaLabel, min = 0, step = '0.1' }) {
   const input = document.createElement('input');
   input.type = 'number';
   input.className = className;
-  input.step = '0.1';
+  input.step = step;
   input.min = String(min);
-  input.inputMode = 'decimal';
+  input.inputMode = step.includes('.') ? 'decimal' : 'numeric';
   input.setAttribute('aria-label', ariaLabel);
   input.value = value === 0 ? '' : String(round2(value));
   input.placeholder = '0';
@@ -428,16 +434,20 @@ function buildTimeRow(dates, weekIndex, label, field) {
   return row;
 }
 
-/** Break and PTO: one hours box per day, summed in the week column. */
-function buildHoursRow(dates, weekIndex, { label, key, read, write }) {
-  const row = gridRow('grid__row', label);
+/**
+ * Break (minutes) and PTO (hours): one number box per day, summed in the week
+ * column. `unit` names what goes in the box, for the label and the step.
+ */
+function buildHoursRow(dates, weekIndex, { label, heading, key, unit = 'hours', step, read, write }) {
+  const row = gridRow('grid__row', heading || label);
   for (const dateISO of dates) {
     const day = store.peekDay(state(), activeStart(), dateISO) || store.emptyDay();
     const cell = dayCell(dateISO);
     const input = numberInput({
       value: read(day),
       className: 'hours-input',
-      ariaLabel: `${label} hours ${dateISO}`,
+      ariaLabel: `${label} ${unit} ${dateISO}`,
+      step,
     });
     input.addEventListener('input', (event) => {
       write(store.getDay(state(), activeStart(), dateISO), toNumber(event.target.value));
@@ -690,9 +700,12 @@ function buildWeek(weekIndex) {
     buildTimeRow(dates, weekIndex, 'End', 'end'),
     buildHoursRow(dates, weekIndex, {
       label: 'Break',
+      heading: 'Break (min)',
       key: 'break',
-      read: (day) => toNumber(day.breakHours),
-      write: (day, value) => { day.breakHours = value; },
+      unit: 'minutes',
+      step: '5',
+      read: (day) => dayBreakMinutes(day),
+      write: (day, value) => { day.breakMinutes = Math.max(0, Math.round(value)); },
     }),
     buildWorkedRow(dates, weekIndex),
   );

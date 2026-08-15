@@ -39,7 +39,7 @@ function makePeriod() {
 function fill(period, { count, hours, codeId = REG, pto = 0, startIndex = 0 }) {
   for (let i = 0; i < count; i += 1) {
     const date = DAYS[startIndex + i];
-    const day = period.days[date] || { start: '', end: '', breakHours: 0, pto: 0, note: '', alloc: {} };
+    const day = period.days[date] || { start: '', end: '', breakMinutes: 0, pto: 0, note: '', alloc: {} };
     if (hours) day.alloc[codeId] = (day.alloc[codeId] || 0) + hours;
     if (pto) day.pto = (day.pto || 0) + pto;
     period.days[date] = day;
@@ -80,32 +80,34 @@ test('round1 rounds to the tenth of an hour timecards are entered in', () => {
   assertEqual(round1('nonsense'), 0);
 });
 
-test('dayWorked subtracts the break from the span', () => {
-  assertEqual(dayWorked({ start: '07:30', end: '17:00', breakHours: 0.5 }), 9);
-  assertEqual(dayWorked({ start: '09:00', end: '17:00', breakHours: 0 }), 8);
-  assertEqual(dayWorked({ start: '09:00', end: '17:00', breakHours: 1 }), 7);
+test('dayWorked subtracts the break, given in minutes, from the span', () => {
+  assertEqual(dayWorked({ start: '07:30', end: '17:00', breakMinutes: 30 }), 9);
+  assertEqual(dayWorked({ start: '09:00', end: '17:00', breakMinutes: 0 }), 8);
+  assertEqual(dayWorked({ start: '09:00', end: '17:00', breakMinutes: 60 }), 7);
+  // A break that is not a whole tenth of an hour still lands where it should.
+  assertEqual(dayWorked({ start: '09:00', end: '17:00', breakMinutes: 20 }), 7.67);
 });
 
 test('an incomplete day is worth zero hours', () => {
-  assertEqual(dayWorked({ start: '09:00', end: '', breakHours: 0 }), 0);
-  assertEqual(dayWorked({ start: '', end: '17:00', breakHours: 0 }), 0);
+  assertEqual(dayWorked({ start: '09:00', end: '', breakMinutes: 0 }), 0);
+  assertEqual(dayWorked({ start: '', end: '17:00', breakMinutes: 0 }), 0);
   assertEqual(dayWorked(null), 0);
 });
 
 test('a break longer than the shift clamps to zero, never negative', () => {
-  assertEqual(dayWorked({ start: '09:00', end: '10:00', breakHours: 3 }), 0);
+  assertEqual(dayWorked({ start: '09:00', end: '10:00', breakMinutes: 180 }), 0);
 });
 
 test('an end at or before the start is read as an overnight shift', () => {
-  assertEqual(dayWorked({ start: '22:00', end: '06:00', breakHours: 0.5 }), 7.5);
+  assertEqual(dayWorked({ start: '22:00', end: '06:00', breakMinutes: 30 }), 7.5);
   assert(isOvernight({ start: '22:00', end: '06:00' }));
   assert(!isOvernight({ start: '09:00', end: '17:00' }));
   // Exactly equal times mean a full 24 hours, not zero.
-  assertEqual(dayWorked({ start: '09:00', end: '09:00', breakHours: 0 }), 24);
+  assertEqual(dayWorked({ start: '09:00', end: '09:00', breakMinutes: 0 }), 24);
 });
 
 test('dayVariance reports hours still needing a charge code', () => {
-  const day = { start: '07:30', end: '17:00', breakHours: 0.5, alloc: { [REG]: 6 } };
+  const day = { start: '07:30', end: '17:00', breakMinutes: 30, alloc: { [REG]: 6 } };
   assertEqual(dayWorked(day), 9);
   assertEqual(dayAllocated(day), 6);
   assertEqual(dayVariance(day), 3);
@@ -118,9 +120,9 @@ test('dayVariance reports hours still needing a charge code', () => {
 });
 
 test('dayIsEmpty distinguishes untouched days from PTO-only days', () => {
-  assert(dayIsEmpty({ start: '', end: '', breakHours: 0, pto: 0, note: '', alloc: {} }));
-  assert(!dayIsEmpty({ start: '', end: '', breakHours: 0, pto: 8, note: '', alloc: {} }));
-  assert(!dayIsEmpty({ start: '09:00', end: '', breakHours: 0, pto: 0, note: '', alloc: {} }));
+  assert(dayIsEmpty({ start: '', end: '', breakMinutes: 0, pto: 0, note: '', alloc: {} }));
+  assert(!dayIsEmpty({ start: '', end: '', breakMinutes: 0, pto: 8, note: '', alloc: {} }));
+  assert(!dayIsEmpty({ start: '09:00', end: '', breakMinutes: 0, pto: 0, note: '', alloc: {} }));
 });
 
 test('PTO is clamped at zero', () => {
@@ -247,7 +249,7 @@ test('an empty period is all zeros', () => {
 test('unallocated hours are reported at the period level', () => {
   const period = makePeriod();
   period.days[DAYS[2]] = {
-    start: '07:30', end: '17:00', breakHours: 0.5, pto: 0, note: '',
+    start: '07:30', end: '17:00', breakMinutes: 30, pto: 0, note: '',
     alloc: { [REG]: 6 },
   };
   const totals = periodTotals(period, START);
@@ -259,7 +261,7 @@ test('unallocated hours are reported at the period level', () => {
 test('over-allocation surfaces as a negative unallocated figure', () => {
   const period = makePeriod();
   period.days[DAYS[2]] = {
-    start: '09:00', end: '17:00', breakHours: 0, pto: 0, note: '',
+    start: '09:00', end: '17:00', breakMinutes: 0, pto: 0, note: '',
     alloc: { [REG]: 10 },
   };
   assertClose(periodTotals(period, START).unallocated, -2);
@@ -267,7 +269,7 @@ test('over-allocation surfaces as a negative unallocated figure', () => {
 
 test('hours on a deleted code still count as regular', () => {
   const period = makePeriod();
-  period.days[DAYS[2]] = { start: '', end: '', breakHours: 0, pto: 0, note: '', alloc: { 'gone-id': 5 } };
+  period.days[DAYS[2]] = { start: '', end: '', breakMinutes: 0, pto: 0, note: '', alloc: { 'gone-id': 5 } };
   const totals = periodTotals(period, START);
   assertClose(totals.R, 5, 'orphaned hours stay visible rather than vanishing');
   assertEqual(totals.byCode.has('gone-id'), false);
@@ -276,7 +278,7 @@ test('hours on a deleted code still count as regular', () => {
 test('totalsByCode reports each code separately', () => {
   const period = makePeriod();
   period.days[DAYS[2]] = {
-    start: '', end: '', breakHours: 0, pto: 0, note: '',
+    start: '', end: '', breakMinutes: 0, pto: 0, note: '',
     alloc: { [REG]: 6, [REG2]: 2, [OT]: 1 },
   };
   const byCode = totalsByCode(period, DAYS);
