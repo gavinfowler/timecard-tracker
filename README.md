@@ -18,18 +18,42 @@ local storage — nothing is uploaded anywhere.
   `8h 25m`. It uses the same overnight rule as the grid and saves nothing.
 - **Pay periods** — configure the start date once (it snaps to a Saturday); every
   period after that is a 14-day stride from it. Navigate with ◀ ▶ or jump to Today.
-- **Charge codes** — add per-period codes, each marked *regular* or *overtime*. The
-  same code can be carried under both types, for employers who bill overtime against
-  the same number; the two get their own rows, tagged `REG` and `OT`. A code is a
-  duplicate only if its name *and* type already exist. One click copies last period's
-  codes forward.
+- **Charge codes** — one table of every code any pay period has ever used, with a
+  tick box per row for whether it is in the period you are looking at. Each code
+  carries an optional **SUPP code**, a description, and a *regular* or *overtime*
+  marking, and each row shows what it has taken this period and when it was last
+  charged. A code is a duplicate only if its name, SUPP code *and* type all already
+  exist — so the same number can be carried under two SUPP codes, or once as regular
+  and once as overtime for employers who bill overtime against the same number. Each
+  combination gets its own grid row, tagged `REG` or `OT`. One click copies last
+  period's codes forward.
+- **Removing a code from the list never touches a pay period.** The `×` on a row takes
+  the code out of the list and out of the suggestions, and nothing else: every pay
+  period keeps the code and every hour charged to it, and the export is unchanged. It
+  stays on screen, greyed and tagged `archived`, for as long as it is still in the
+  period you are looking at — untick it separately if you want it out of that period
+  too, which *does* delete that period's hours and asks first. **Show archived** lists
+  what has been removed, with a **Restore** button. Adding the same code again from
+  the form restores it.
 - **Daily entry** — each week is a matrix: the seven days across the top, and down
-  the left the start/end/break/worked rows, then a row per charge code, then PTO and
-  the balance. So Monday can be split two ways and Tuesday charged to something else
+  the left the start/end/break rows, then a row per charge code, then PTO, worked,
+  charged and the balance. So Monday can be split two ways and Tuesday charged to something else
   entirely, and a code's week reads straight across. Hours go in in tenths of an hour
   (`0.1`); the break goes in as whole **minutes** (`30`), since that is how breaks are
   actually taken. A balance chip per day shows `✓ balanced`, `N unallocated`, or `N
   over worked`, with a **fill** button to dump the remainder into that day's code.
+- **Charged, against worked** — under the code rows, `Charged` totals everything the
+  day put on a code *plus* its PTO, sitting directly under what the day worked, so a
+  leave day reads as fully charged rather than as eight hours missing.
+- **Tab runs down a day, not across the week.** A day owns a column, so plain document
+  order would take you across all seven Start boxes before the first End box. Tab
+  instead walks one day — start, end, break, each code, PTO, fill, water — and only
+  then moves to the next day. Shift+Tab walks back. At the ends of a week the key is
+  left to the browser, so focus still leaves the grid normally.
+- **Water (oz)** — a row at the foot of each week for logging what you drank, with a
+  week total. It has nothing to do with timekeeping: it is stored with the day but
+  counts toward no total, appears in no summary, and is left out of the CSV export
+  and of print.
 - **Hours worked per day, against a target** — every day reports what it worked and
   what your **week format** expects of it (`8.75` / `of 9`): green once the day is met,
   amber while it is short, and `off` on a day the schedule doesn't work. PTO counts
@@ -47,13 +71,14 @@ local storage — nothing is uploaded anywhere.
   All four total 80 hours a period. The format is a **target only** — it changes what
   each day is compared against, never how regular, overtime, or PTO are worked out.
 - **Week totals** — a right-hand column totals every row of the matrix: break (minutes),
-  worked, each charge code, PTO, and what the week still has unallocated. The week
+  worked, each charge code, PTO, charged, water (ounces), and what the week still has
+  unallocated. The week
   heading reads worked against the week's scheduled hours (`Worked 36.00 of 44`).
 - **Live totals** — regular (of 80), overtime, PTO, remaining, and total paid, plus
   a progress bar and per-code period totals.
 - **PTO** — entered per day, counts toward the 80 regular hours, never creates overtime.
-- **Export** — CSV of `date × charge code × hours` for pasting into your real
-  timesheet, plus a full JSON backup you can re-import.
+- **Export** — CSV of `date × charge code × SUPP code × hours` for pasting into your
+  real timesheet, plus a full JSON backup you can re-import.
 - Works in light and dark mode, prints cleanly, and keeps two open tabs in sync.
 
 ## How hours are calculated
@@ -138,6 +163,15 @@ origin serving the page. That means:
   replaces all local state with the file's contents.
 - Timecards saved before breaks moved to minutes are migrated when they load, whether
   from local storage or an imported backup: a `0.5`-hour break becomes `30` minutes.
+- Files written before SUPP codes, the removed-code list, or the water row existed
+  load fine: those fields simply default to empty. The saved shape is now version 3.
+
+Charge codes are stored **per pay period**, each with its own ids, and a day's hours
+point at those ids. Nothing links a code in one period to the same code in another, so
+a period can only ever be changed by editing that period. The charge code list is not
+stored at all — it is derived by reading every period — and removing a code from it
+records only its name, SUPP code and type in a separate `archivedCodes` list. That is
+why removing a code cannot affect a past pay period: there is nothing shared to break.
 
 ## Project layout
 

@@ -181,6 +181,15 @@ export function dayCredited(day) {
   return round2(dayWorked(day) + dayPTO(day));
 }
 
+/**
+ * Hours the day accounts for: everything on a charge code, plus PTO. What the
+ * day *should* charge is dayWorked + PTO, so this is the figure the balance is
+ * measured against once leave is in play.
+ */
+export function dayCharged(day) {
+  return round2(dayAllocated(day) + dayPTO(day));
+}
+
 function codeTypeMap(period) {
   const types = new Map();
   for (const code of period.codes || []) types.set(code.id, code.type);

@@ -4,7 +4,7 @@ import { dayPTO, round2, toNumber } from './calc.js';
 import { periodDays, weekdayShort } from './payperiod.js';
 import { normalizeState } from './state.js';
 
-const CSV_HEADER = ['date', 'weekday', 'charge_code', 'type', 'hours'];
+const CSV_HEADER = ['date', 'weekday', 'charge_code', 'supp_code', 'type', 'hours'];
 
 function csvCell(value) {
   const text = String(value ?? '');
@@ -34,7 +34,9 @@ export function buildCSV(state, startISO) {
     for (const code of period.codes) {
       const hours = toNumber(day.alloc[code.id]);
       if (hours === 0) continue;
-      rows.push(csvRow([date, weekday, code.code, code.type, round2(hours).toFixed(2)]));
+      rows.push(
+        csvRow([date, weekday, code.code, code.supp, code.type, round2(hours).toFixed(2)]),
+      );
     }
 
     // Hours pointing at a code that no longer exists still belong in the export.
@@ -42,12 +44,14 @@ export function buildCSV(state, startISO) {
       if (codeById.has(codeId)) continue;
       const hours = toNumber(raw);
       if (hours === 0) continue;
-      rows.push(csvRow([date, weekday, '(removed code)', 'regular', round2(hours).toFixed(2)]));
+      rows.push(
+        csvRow([date, weekday, '(removed code)', '', 'regular', round2(hours).toFixed(2)]),
+      );
     }
 
     const pto = dayPTO(day);
     if (pto > 0) {
-      rows.push(csvRow([date, weekday, state.ptoCodeLabel || 'PTO', 'pto', pto.toFixed(2)]));
+      rows.push(csvRow([date, weekday, state.ptoCodeLabel || 'PTO', '', 'pto', pto.toFixed(2)]));
     }
   }
 

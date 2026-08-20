@@ -312,28 +312,43 @@ a:focus-visible {
 }
 .code-form .field { min-width: 11rem; }
 
-.code-list {
-  list-style: none;
-  margin: 0.9rem 0 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.code-chip {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.4rem 0.35rem 0.6rem;
-  border: 1px solid var(--border-strong);
-  border-radius: 99px;
-  background: var(--surface-alt);
+/* The charge code catalog: every code any pay period has used. */
+.code-table {
+  width: 100%;
+  min-width: 40rem;
+  margin-top: 0.9rem;
+  border-collapse: collapse;
   font-size: 0.88rem;
 }
-.code-chip__name { font-weight: 600; }
-.code-chip__desc { color: var(--text-muted); }
-.code-chip__type {
+.code-table th,
+.code-table td {
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.code-table thead th {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  font-weight: 700;
+  border-bottom-color: var(--border-strong);
+  white-space: nowrap;
+}
+.code-table tbody tr:last-child th,
+.code-table tbody tr:last-child td { border-bottom: 0; }
+
+.code-table__name { font-weight: 650; }
+.code-table__supp,
+.code-table__last { color: var(--text-muted); white-space: nowrap; }
+.code-table__desc { color: var(--text-muted); }
+.code-table__hours { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.code-table__use { text-align: center; }
+.code-table__use input { accent-color: var(--accent); width: 1rem; height: 1rem; }
+.code-table__actions { text-align: right; width: 1%; white-space: nowrap; }
+
+.code-table__type {
   font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -343,19 +358,36 @@ a:focus-visible {
   background: var(--accent-soft);
   color: var(--accent);
 }
-.code-chip__type--overtime { background: color-mix(in srgb, var(--ot) 18%, transparent); color: var(--ot); }
-.code-chip__hours { font-variant-numeric: tabular-nums; color: var(--text-muted); }
-.code-chip__remove {
+.code-table__type--overtime { background: color-mix(in srgb, var(--ot) 18%, transparent); color: var(--ot); }
+
+/* Still listed only because it is in this pay period; muted so it reads as on
+   its way out rather than as a code you would charge to next. */
+.code-table__row--archived { color: var(--text-muted); }
+.code-table__row--archived .code-table__name { font-weight: 500; }
+.code-table__tag {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  padding: 0.05rem 0.35rem;
+  border-radius: 99px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+}
+
+.code-table__remove {
   border: 0;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
   font-size: 1rem;
   line-height: 1;
-  padding: 0.15rem 0.35rem;
+  padding: 0.15rem 0.4rem;
   border-radius: 99px;
 }
-.code-chip__remove:hover { background: var(--danger-soft); color: var(--danger); }
+.code-table__remove:hover { background: var(--danger-soft); color: var(--danger); }
+
+#code-archived-toggle { margin-top: 0.75rem; }
 
 .empty-note { color: var(--text-muted); font-size: 0.88rem; margin: 0.75rem 0 0; }
 
@@ -441,12 +473,14 @@ table.grid thead th {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.grid__code-desc {
+.grid__code-desc,
+.grid__code-supp {
   font-size: 0.72rem;
   font-weight: 400;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.grid__code-supp { color: var(--text-muted); }
 /* Shown on every overtime row, and on both rows of a code carried under each
    charging type — there, the tag is the only thing telling them apart. */
 .grid__code-type {
@@ -459,6 +493,13 @@ table.grid thead th {
   color: var(--ot);
 }
 .grid__code-type--regular { background: var(--accent-soft); color: var(--accent); }
+
+.grid__row--charged .grid__cell { font-variant-numeric: tabular-nums; font-weight: 600; }
+.grid__row--charged .grid__label { color: var(--text-muted); }
+
+.grid__band--water .grid__label,
+.grid__band--water .grid__cell { color: var(--text-muted); }
+.grid__band--water .grid__label { font-weight: 500; }
 
 /* Times, charge codes, and what is left over read as three bands. */
 .grid__band + .grid__band > tr:first-child > th,
@@ -583,7 +624,11 @@ table.grid thead th {
   .skip-link,
   .period-nav button,
   .fill-btn,
-  .code-chip__remove,
+  .code-table__remove,
+  .code-table__restore,
+  .code-table__use,
+  .grid__band--water,
+  #code-archived-toggle,
   #copy-codes { display: none !important; }
   body { background: #fff; }
   .panel { break-inside: avoid; box-shadow: none; }

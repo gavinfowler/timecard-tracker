@@ -11,9 +11,12 @@ import {
 const STORAGE_KEY = 'timecard-tracker/v1';
 const SAVE_DELAY_MS = 200;
 
+// v3 adds a SUPP code on every charge code, the archived-code list, and the
+// daily water figure. All three are additive, so a v2 file needs no migration
+// beyond the defaults normalizeState fills in.
 // v2 stores the daily break in whole minutes (`breakMinutes`); v1 stored it as
 // decimal hours (`breakHours`). normalizeDay migrates the old field on read.
-export const STATE_VERSION = 2;
+export const STATE_VERSION = 3;
 
 let saveTimer = null;
 let storageWarning = '';
@@ -37,12 +40,13 @@ export function defaultState(today = todayISO()) {
     activePeriodStart: anchor,
     ptoCodeLabel: 'PTO',
     weekFormat: DEFAULT_WEEK_FORMAT,
+    archivedCodes: [],
     periods: {},
   };
 }
 
 export function emptyDay() {
-  return { start: '', end: '', breakMinutes: 0, pto: 0, note: '', alloc: {} };
+  return { start: '', end: '', breakMinutes: 0, pto: 0, waterOz: 0, note: '', alloc: {} };
 }
 
 export function emptyPeriod() {
@@ -69,6 +73,7 @@ function normalizeDay(raw) {
   day.note = typeof raw.note === 'string' ? raw.note : '';
   day.breakMinutes = readBreakMinutes(raw);
   day.pto = Number(raw.pto) || 0;
+  day.waterOz = Math.max(0, Math.round(Number(raw.waterOz))) || 0;
   if (raw.alloc && typeof raw.alloc === 'object') {
     for (const [codeId, hours] of Object.entries(raw.alloc)) {
       const amount = Number(hours);
@@ -93,6 +98,7 @@ function normalizePeriod(raw) {
     period.codes.push({
       id,
       code,
+      supp: String(rawCode.supp ?? '').trim(),
       label: String(rawCode.label ?? '').trim(),
       type: rawCode.type === 'overtime' ? 'overtime' : 'regular',
     });
@@ -105,6 +111,18 @@ function normalizePeriod(raw) {
     }
   }
   return period;
+}
+
+/** Archived-code keys: unique, non-empty strings, in the order first seen. */
+function normalizeArchived(raw) {
+  const keys = [];
+  const seen = new Set();
+  for (const value of Array.isArray(raw) ? raw : []) {
+    if (typeof value !== 'string' || !value || seen.has(value)) continue;
+    seen.add(value);
+    keys.push(value);
+  }
+  return keys;
 }
 
 /** Coerce anything (parsed JSON, an import file) into a valid state object. */
@@ -136,6 +154,7 @@ export function normalizeState(raw) {
     // An unknown format falls back to the default rather than leaving every day
     // without a target. A file written before week formats existed has none.
     weekFormat: weekFormatById(raw.weekFormat).id,
+    archivedCodes: normalizeArchived(raw.archivedCodes),
     periods,
   };
 }
@@ -216,30 +235,44 @@ export function peekDay(state, startISO, dateISO) {
   return (period && period.days[dateISO]) || null;
 }
 
-/** A code is identified by name *and* charging type, so the same number can be
-    carried once as regular and once as overtime. The type leads: a name may
-    contain spaces, so trailing it would let "A B"+regular collide with "A"+"B regular". */
-function codeKey(code, type) {
-  return `${type} ${String(code).trim().toLowerCase()}`;
+/** A code is identified by name, SUPP code *and* charging type, so the same
+    number can be carried once as regular and once as overtime, and once under
+    each SUPP code. The parts are joined on a unit separator rather than a space
+    because a name may contain spaces: on a space, "A B"+"C" and "A"+"B C" would
+    collide. */
+const KEY_SEP = '\u001f';
+
+function codeKey(code, supp, type) {
+  return [
+    type,
+    String(supp ?? '').trim().toLowerCase(),
+    String(code ?? '').trim().toLowerCase(),
+  ].join(KEY_SEP);
 }
 
-export function addCode(state, startISO, { code, label, type }) {
+/** The same key, straight off a stored charge code. */
+export function codeKeyOf(code) {
+  return codeKey(code.code, code.supp, code.type);
+}
+
+export function addCode(state, startISO, { code, supp, label, type }) {
   const period = getPeriod(state, startISO);
   const trimmed = String(code ?? '').trim();
   if (!trimmed) return { ok: false, error: 'Enter a charge code.' };
 
+  const suppCode = String(supp ?? '').trim();
   const kind = type === 'overtime' ? 'overtime' : 'regular';
-  const clash = period.codes.some(
-    (existing) => codeKey(existing.code, existing.type) === codeKey(trimmed, kind),
-  );
-  if (clash) {
+  const key = codeKey(trimmed, suppCode, kind);
+  if (period.codes.some((existing) => codeKeyOf(existing) === key)) {
     const article = kind === 'overtime' ? 'an overtime' : 'a regular';
-    return { ok: false, error: `${trimmed} is already in this pay period as ${article} code.` };
+    const named = suppCode ? `${trimmed} / ${suppCode}` : trimmed;
+    return { ok: false, error: `${named} is already in this pay period as ${article} code.` };
   }
 
   const entry = {
     id: newId(),
     code: trimmed,
+    supp: suppCode,
     label: String(label ?? '').trim(),
     type: kind,
   };
@@ -261,17 +294,26 @@ export function setAllocation(state, startISO, dateISO, codeId, hours) {
   else day.alloc[codeId] = amount;
 }
 
-/** Bring forward the previous period's charge codes, skipping duplicates. */
+/** Bring forward the previous period's charge codes, skipping duplicates and
+    anything archived — an archived code is one you have said you are done with. */
 export function copyCodesFromPrevious(state, startISO, previousStartISO) {
   const previous = state.periods[previousStartISO];
   if (!previous || previous.codes.length === 0) return 0;
   const period = getPeriod(state, startISO);
-  const existing = new Set(period.codes.map((code) => codeKey(code.code, code.type)));
+  const archived = new Set(state.archivedCodes || []);
+  const existing = new Set(period.codes.map(codeKeyOf));
   let copied = 0;
   for (const code of previous.codes) {
-    if (existing.has(codeKey(code.code, code.type))) continue;
-    period.codes.push({ id: newId(), code: code.code, label: code.label, type: code.type });
-    existing.add(codeKey(code.code, code.type));
+    const key = codeKeyOf(code);
+    if (existing.has(key) || archived.has(key)) continue;
+    period.codes.push({
+      id: newId(),
+      code: code.code,
+      supp: code.supp,
+      label: code.label,
+      type: code.type,
+    });
+    existing.add(key);
     copied += 1;
   }
   return copied;
@@ -280,6 +322,89 @@ export function copyCodesFromPrevious(state, startISO, previousStartISO) {
 /** Wipe the period's day entries, keeping its charge codes. */
 export function clearPeriodDays(state, startISO) {
   getPeriod(state, startISO).days = {};
+}
+
+// --- charge code catalog ---------------------------------------------------
+
+/** True once any day in the period charges hours to `codeId`. */
+function chargesHours(period, codeId) {
+  for (const day of Object.values(period.days || {})) {
+    if (Number((day.alloc || {})[codeId]) > 0) return true;
+  }
+  return false;
+}
+
+/** Later dates first; a null — never charged — sorts to the end. */
+function compareISODesc(a, b) {
+  if (a === b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  return a < b ? 1 : -1;
+}
+
+function compareCatalog(a, b) {
+  return (
+    compareISODesc(a.lastChargedStart, b.lastChargedStart) ||
+    compareISODesc(a.lastSeenStart, b.lastSeenStart) ||
+    a.code.localeCompare(b.code) ||
+    a.supp.localeCompare(b.supp) ||
+    // Same name and SUPP under both types: regular first ("regular" sorts after
+    // "overtime", hence the flip), so the order does not depend on which period
+    // happened to be read first.
+    b.type.localeCompare(a.type)
+  );
+}
+
+/**
+ * Every charge code any pay period has ever carried, deduped by key.
+ *
+ * Codes are stored per period, with ids minted fresh each time, so there is no
+ * stored catalog to read — this derives one. Nothing here is persisted, and
+ * archiving a row writes only to `state.archivedCodes`, which is what lets a
+ * code leave the list while every past pay period keeps its own copy and hours.
+ */
+export function codeCatalog(state, activeStartISO) {
+  const archived = new Set(state.archivedCodes || []);
+  const catalog = new Map();
+
+  // Oldest period first, so the most recent spelling and description win.
+  for (const startISO of Object.keys(state.periods || {}).sort()) {
+    const period = state.periods[startISO];
+    for (const code of period.codes || []) {
+      const key = codeKeyOf(code);
+      const row = catalog.get(key) || {
+        key,
+        archived: archived.has(key),
+        activeId: null,
+        lastChargedStart: null,
+        lastSeenStart: null,
+      };
+      row.code = code.code;
+      row.supp = code.supp;
+      row.label = code.label;
+      row.type = code.type;
+      row.lastSeenStart = startISO;
+      if (chargesHours(period, code.id)) row.lastChargedStart = startISO;
+      if (startISO === activeStartISO) row.activeId = code.id;
+      catalog.set(key, row);
+    }
+  }
+
+  return [...catalog.values()].sort(compareCatalog);
+}
+
+export function isArchived(state, key) {
+  return (state.archivedCodes || []).includes(key);
+}
+
+/** Drop a code from the catalog. Deliberately touches no pay period: the code
+    and its hours stay wherever they were already entered. */
+export function archiveCode(state, key) {
+  if (!state.archivedCodes.includes(key)) state.archivedCodes.push(key);
+}
+
+export function restoreCode(state, key) {
+  state.archivedCodes = state.archivedCodes.filter((archivedKey) => archivedKey !== key);
 }
 
 export function setAnchor(state, requestedISO) {

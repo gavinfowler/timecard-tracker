@@ -80,10 +80,41 @@ try {
     return el;
   };
   const worked = (date) => cell(date, '.worked').querySelector('span').textContent;
+  const charged = (date) => cell(date, '.charged').querySelector('span').textContent;
   const target = (date) => cell(date, '.worked').querySelector('.worked__target').textContent;
   const chip = (date) => cell(date, '.balance').querySelector('.chip').textContent;
   const fillBtn = (date) => cell(date, '.balance').querySelector('.fill-btn');
   const total = (weekIndex, key) => q(`[data-total="${weekIndex}:${key}"]`).textContent;
+
+  // The charge code panel lists every code any period has used, so "in the
+  // catalog" and "in this pay period" are now two different counts.
+  const catalogRows = () => [...document.querySelectorAll('#code-rows tr')];
+  const inThisPeriod = () => document.querySelectorAll('#code-rows .code-table__toggle:checked');
+  const catalogRow = (code, type = 'Reg', supp = '—') => {
+    const row = catalogRows().find(
+      (tr) => tr.querySelector('.code-table__name').firstChild.textContent === code
+        && tr.querySelector('.code-table__type').textContent === type
+        && tr.querySelector('.code-table__supp').textContent === supp,
+    );
+    if (!row) throw new Error(`${code} (${type}, supp ${supp}) is not in the catalog`);
+    return row;
+  };
+  const addCodeViaForm = ({ code, supp = '', label = '', type = 'regular' }) => {
+    const codeForm = $('code-form');
+    $('code-input').value = code;
+    $('code-supp').value = supp;
+    $('code-label').value = label;
+    codeForm.querySelector(`input[value="${type}"]`).checked = true;
+    codeForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  };
+  // Our own Tab handling runs off keydown, so a synthetic key moves focus too.
+  const pressTab = (shift = false) => {
+    document.activeElement.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Tab', shiftKey: shift, bubbles: true, cancelable: true }),
+    );
+    return document.activeElement;
+  };
+  const focusedDate = () => document.activeElement.closest('[data-date]').dataset.date;
 
   // --- the scratch time calculator ----------------------------------------
   // The static "not loaded" fallback must be gone once the grid has drawn.
@@ -116,15 +147,11 @@ try {
 
   // --- add charge codes through the real form -----------------------------
   const form = $('code-form');
-  $('code-input').value = 'PROJ-A';
-  $('code-label').value = 'Platform';
-  form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  addCodeViaForm({ code: 'PROJ-A', label: 'Platform' });
+  addCodeViaForm({ code: 'PROJ-A-OT', type: 'overtime' });
 
-  $('code-input').value = 'PROJ-A-OT';
-  form.querySelector('input[value="overtime"]').checked = true;
-  form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-
-  check('two code chips rendered', document.querySelectorAll('.code-chip').length, 2);
+  check('two rows in the catalog', catalogRows().length, 2);
+  check('and both are in this pay period', inThisPeriod().length, 2);
   check('a week is seven days plus a label and a total column',
     document.querySelectorAll('.grid')[0].querySelectorAll('thead th').length, 9);
   check('both weeks rendered', document.querySelectorAll('.grid').length, 2);
@@ -142,12 +169,18 @@ try {
   check('overtime codes are marked on their row',
     document.querySelectorAll('.grid__code-type').length, 2);
   check('days run across the top', q('.grid thead .grid__day-dow').textContent, 'Sat');
+  const rowNames = (weekIndex) =>
+    [...document.querySelectorAll('.grid')[weekIndex].querySelectorAll('.grid__label')]
+      .map((th) => (th.querySelector('.grid__code-name') || th).firstChild.textContent.trim());
+  check('worked and charged sit below the codes, before the balance',
+    rowNames(0).join(' > '),
+    'Start > End > Break (min) > PROJ-A > PROJ-A-OT > PTO > Worked > Charged > Balance > Water (oz)');
 
   // duplicate rejected
   $('code-input').value = 'proj-a';
   form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
   check('duplicate code rejected', $('code-error').hidden, 'false');
-  check('still two codes', document.querySelectorAll('.code-chip').length, 2);
+  check('still two codes', catalogRows().length, 2);
 
   // --- enter a day --------------------------------------------------------
   const D = '2026-08-03'; // Monday of week 1
@@ -175,6 +208,38 @@ try {
     document.querySelectorAll(`td.alloc[data-date="${D}"]`).length, 2);
   check('week column totals the code row', total(0, `code:${ctx.state.periods['2026-08-01'].codes[0].id}`), '6.00');
   check('week balance chip', q('[data-total="0:balance"] .chip').textContent, '✓ balanced');
+  check('charged matches what the day worked', charged(D), '9.00');
+  check('the week totals what it charged', total(0, 'charged'), '9.00');
+
+  // --- tabbing runs down a day, not across the week -----------------------
+  // The harness keeps the app markup hidden; nothing in a display:none subtree
+  // can take focus, so show it for the length of this check.
+  root.style.display = 'block';
+  q(`input[aria-label="Start time ${D}"]`).focus();
+  const walked = [];
+  for (let i = 0; i < 6; i += 1) walked.push(pressTab().getAttribute('aria-label'));
+  check('Tab walks one day to its end before leaving it',
+    walked.join(' > '),
+    `End time ${D} > Break minutes ${D} > PROJ-A hours ${D} > PROJ-A-OT hours ${D} `
+      + `> PTO hours ${D} > Water ounces ${D}`);
+  check('and never wanders into another day', focusedDate(), D);
+  check('Shift+Tab walks back up the same day', pressTab(true).getAttribute('aria-label'),
+    `PTO hours ${D}`);
+
+  // Tabbing on from the last box of the last day is left to the browser, so
+  // focus can still leave the week the ordinary way.
+  q(`input[aria-label="Water ounces 2026-08-07"]`).focus();
+  check('the end of the week falls through to the browser',
+    pressTab() === q(`input[aria-label="Water ounces 2026-08-07"]`), 'true');
+  root.style.display = '';
+
+  // --- water, which is not timecard data ----------------------------------
+  setVal(q(`input[aria-label="Water ounces ${D}"]`), '64');
+  setVal(q(`input[aria-label="Water ounces 2026-08-04"]`), '48');
+  check('water totals for the week', total(0, 'water'), '112');
+  check('water changes no hours', worked(D), '9.00');
+  check('and no charged total', charged(D), '9.00');
+  check('and nothing in the summary', text('stat-total'), '9.00');
 
   // tenth-of-an-hour entry
   setVal(chargeCode(D, 'PROJ-A'), '6.1');
@@ -235,6 +300,8 @@ try {
   check('regular includes pto', text('stat-regular'), '30.00'); // 6+8+8 worked reg + 8 pto
   check('regular note', text('stat-regular-note'), '22.00 worked + 8.00 PTO');
   check('pto day chip', chip(D4), '8.00 PTO');
+  check('a leave day charges its PTO', charged(D4), '8.00');
+  check('the week charges worked hours plus PTO', total(0, 'charged'), '33.00'); // 9+8+8 + 8 PTO
   check('pto totals in the week column', total(0, 'pto'), '8.00');
   check('overtime unchanged by pto', text('stat-ot'), '3.00');
 
@@ -243,10 +310,14 @@ try {
   const reloaded = store.loadState();
   check('saved to localStorage', reloaded.periods['2026-08-01'].days[D].alloc ? 'yes' : 'no', 'yes');
   check('reloaded worked start', reloaded.periods['2026-08-01'].days[D].start, '07:30');
+  check('water is saved with the day', reloaded.periods['2026-08-01'].days[D].waterOz, 64);
 
   $('next-period').click();
   check('advanced two weeks', text('period-range'), 'Aug 15 – Aug 28, 2026');
-  check('new period has no codes', document.querySelectorAll('.code-chip').length, 0);
+  check('new period starts with no codes in it', inThisPeriod().length, 0);
+  check('but the catalog remembers both', catalogRows().length, 2);
+  check('and says when each was last charged',
+    catalogRow('PROJ-A').querySelector('.code-table__last').textContent, 'Aug 1 – Aug 14, 2026');
   check('no codes means no code rows', document.querySelectorAll('.grid__row--code').length, 0);
   check('the entry rows survive with no codes', document.querySelectorAll('.grid').length, 2);
   check('empty week totals show a dash', total(0, 'worked'), '—');
@@ -254,8 +325,17 @@ try {
   check('copy-codes now enabled', $('copy-codes').disabled, 'false');
 
   $('copy-codes').click();
-  check('codes copied forward', document.querySelectorAll('.code-chip').length, 2);
+  check('codes copied forward', inThisPeriod().length, 2);
   check('copied codes carry no hours', q('[data-code-total]').textContent, '0.00 hrs');
+
+  // Unticking and re-ticking a catalog row is how a code joins or leaves a period.
+  catalogRow('PROJ-A').querySelector('.code-table__toggle').click();
+  check('unticking an unused code drops it, no prompt', inThisPeriod().length, 1);
+  check('and takes its grid rows with it',
+    document.querySelectorAll('.grid__row--code').length, 2);
+  catalogRow('PROJ-A').querySelector('.code-table__toggle').click();
+  check('ticking it puts it back', inThisPeriod().length, 2);
+  check('with a row in each week', document.querySelectorAll('.grid__row--code').length, 4);
 
   $('prev-period').click();
   check('back to first period', text('period-range'), 'Aug 1 – Aug 14, 2026');
@@ -276,53 +356,110 @@ try {
 
   // --- CSV ----------------------------------------------------------------
   const csv = buildCSV(ctx.state, '2026-08-01').split('\r\n');
-  check('csv header', csv[0], 'date,weekday,charge_code,type,hours');
-  check('csv first row', csv[1], '2026-08-03,Mon,PROJ-A,regular,6.00');
-  check('csv ot row', csv[2], '2026-08-03,Mon,PROJ-A-OT,overtime,3.00');
-  check('csv pto row', csv.find((r) => r.includes('PTO')), '2026-08-06,Thu,PTO,pto,8.00');
-  const csvSum = csv.slice(1).reduce((s, r) => s + Number(r.split(',')[4]), 0);
+  check('csv header', csv[0], 'date,weekday,charge_code,supp_code,type,hours');
+  check('csv first row', csv[1], '2026-08-03,Mon,PROJ-A,,regular,6.00');
+  check('csv ot row', csv[2], '2026-08-03,Mon,PROJ-A-OT,,overtime,3.00');
+  check('csv pto row', csv.find((r) => r.includes('PTO')), '2026-08-06,Thu,PTO,,pto,8.00');
+  check('csv leaves water out', csv.some((r) => r.includes('64')), 'false');
+  const csvSum = csv.slice(1).reduce((s, r) => s + Number(r.split(',')[5]), 0);
   check('csv sums to total paid', csvSum.toFixed(2), '105.00'); // 88 regular + 17 OT
 
-  // --- code removal clears its hours --------------------------------------
+  // --- taking a code out of the list changes no pay period ----------------
   const originalConfirm = window.confirm;
+  const periodsBefore = JSON.stringify(ctx.state.periods);
+  const csvBefore = buildCSV(ctx.state, '2026-08-01');
+
   window.confirm = () => true;
-  document.querySelectorAll('.code-chip__remove')[1].click(); // PROJ-A-OT
+  catalogRow('PROJ-A').querySelector('.code-table__remove').click();
   window.confirm = originalConfirm;
-  check('code removed', document.querySelectorAll('.code-chip').length, 1);
+
+  check('removing from the list deletes no hours', JSON.stringify(ctx.state.periods), periodsBefore);
+  check('and changes nothing in the export', buildCSV(ctx.state, '2026-08-01'), csvBefore);
+  check('the totals are untouched', text('stat-regular'), '88.00');
+  check('it stays listed while it is still in this period',
+    catalogRow('PROJ-A').classList.contains('code-table__row--archived'), 'true');
+  check('and keeps its grid rows', document.querySelectorAll('.grid__row--code').length, 4);
+  catalogRow('PROJ-A').querySelector('.code-table__restore').click();
+  check('restoring clears the flag',
+    catalogRow('PROJ-A').classList.contains('code-table__row--archived'), 'false');
+
+  // --- unticking a code does clear its hours ------------------------------
+  window.confirm = () => true;
+  catalogRow('PROJ-A-OT', 'OT').querySelector('.code-table__toggle').click();
+  window.confirm = originalConfirm;
+  check('code out of this period', inThisPeriod().length, 1);
   check('its hours removed from OT', text('stat-ot'), '14.00');
+  check('but it is still in the catalog, from the next period', catalogRows().length, 2);
+
+  // Now that it is in no visible period, removing it hides the row outright.
+  window.confirm = () => true;
+  catalogRow('PROJ-A-OT', 'OT').querySelector('.code-table__remove').click();
+  window.confirm = originalConfirm;
+  check('an unused archived code drops off the list', catalogRows().length, 1);
+  check('and is offered back', text('code-archived-toggle'), 'Show archived (1)');
+
+  $('code-archived-toggle').click();
+  check('showing archived brings the row back', catalogRows().length, 2);
+  catalogRow('PROJ-A-OT', 'OT').querySelector('.code-table__restore').click();
+  check('restored', catalogRows().length, 2);
+  check('and the toggle goes away', $('code-archived-toggle').textContent, 'Hide archived');
+  $('code-archived-toggle').click();
 
   // --- the same code under both charging types ----------------------------
-  $('code-input').value = 'PROJ-A';
-  $('code-label').value = 'Platform, overtime';
-  form.querySelector('input[value="overtime"]').checked = true;
-  form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  addCodeViaForm({ code: 'PROJ-A', label: 'Platform, overtime', type: 'overtime' });
   check('same code accepted under the other type', $('code-error').hidden, 'true');
-  check('now two codes named PROJ-A', document.querySelectorAll('.code-chip').length, 2);
+  check('now two codes named PROJ-A in this period', inThisPeriod().length, 2);
   check('a row each per week', document.querySelectorAll('.grid__row--code').length, 4);
   check('both rows are tagged with their type',
     document.querySelectorAll('.grid__code-type').length, 4);
   check('the twins get distinct labels',
-    q(`input[aria-label="PROJ-A regular hours ${D}"]`).value, '6');
+    q(`input[aria-label="PROJ-A (regular) hours ${D}"]`).value, '6');
   check('the overtime twin starts empty',
-    q(`input[aria-label="PROJ-A overtime hours ${D}"]`).value, '');
+    q(`input[aria-label="PROJ-A (overtime) hours ${D}"]`).value, '');
 
-  setVal(q(`input[aria-label="PROJ-A overtime hours ${D}"]`), '2');
+  setVal(q(`input[aria-label="PROJ-A (overtime) hours ${D}"]`), '2');
   check('the overtime twin charges overtime', text('stat-ot'), '16.00');
-  check('the regular twin is untouched', q(`input[aria-label="PROJ-A regular hours ${D}"]`).value, '6');
+  check('the regular twin is untouched',
+    q(`input[aria-label="PROJ-A (regular) hours ${D}"]`).value, '6');
 
   // a third PROJ-A of a type already present is still refused
-  $('code-input').value = 'proj-a';
-  form.querySelector('input[value="overtime"]').checked = true;
-  form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  addCodeViaForm({ code: 'proj-a', type: 'overtime' });
   check('a second overtime PROJ-A is refused', $('code-error').hidden, 'false');
   check('error names the type', $('code-error').textContent,
     'proj-a is already in this pay period as an overtime code.');
-  check('still two codes named PROJ-A', document.querySelectorAll('.code-chip').length, 2);
+  check('still two codes named PROJ-A', inThisPeriod().length, 2);
+
+  // --- the SUPP code is part of a charge code's identity ------------------
+  addCodeViaForm({ code: 'SUPP-X', supp: '100', label: 'First' });
+  addCodeViaForm({ code: 'SUPP-X', supp: '200', label: 'Second' });
+  check('the same code under two SUPP codes is two codes', inThisPeriod().length, 4);
+  check('each gets its own grid row', document.querySelectorAll('.grid__row--code').length, 8);
+  check('and its own hours box',
+    q(`input[aria-label="SUPP-X / 100 hours ${D}"]`) !== q(`input[aria-label="SUPP-X / 200 hours ${D}"]`),
+    'true');
+  check('the SUPP code shows on the row', q('.grid__code-supp').textContent, 'SUPP 100');
+
+  addCodeViaForm({ code: 'SUPP-X', supp: '100' });
+  check('the same code and SUPP twice is refused', $('code-error').hidden, 'false');
+  check('and the error names both', $('code-error').textContent,
+    'SUPP-X / 100 is already in this pay period as a regular code.');
+
+  setVal(q(`input[aria-label="SUPP-X / 100 hours ${D}"]`), '1');
+  const suppCsv = buildCSV(ctx.state, '2026-08-01').split('\r\n');
+  check('csv carries the SUPP code',
+    suppCsv.find((r) => r.includes('SUPP-X')), `${D},Mon,SUPP-X,100,regular,1.00`);
+  setVal(q(`input[aria-label="SUPP-X / 100 hours ${D}"]`), '');
+
+  window.confirm = () => true;
+  catalogRow('SUPP-X', 'Reg', '100').querySelector('.code-table__toggle').click();
+  catalogRow('SUPP-X', 'Reg', '200').querySelector('.code-table__toggle').click();
+  window.confirm = originalConfirm;
+  check('both come back out again', inThisPeriod().length, 2);
 
   const twinCsv = buildCSV(ctx.state, '2026-08-01').split('\r\n');
   check('csv keeps the twins on separate rows',
-    twinCsv.filter((r) => r.startsWith(`${D},Mon,PROJ-A,`)).join(' | '),
-    `${D},Mon,PROJ-A,regular,6.00 | ${D},Mon,PROJ-A,overtime,2.00`);
+    twinCsv.filter((r) => r.startsWith(`${D},Mon,PROJ-A,,`)).join(' | '),
+    `${D},Mon,PROJ-A,,regular,6.00 | ${D},Mon,PROJ-A,,overtime,2.00`);
 
   // --- week formats -------------------------------------------------------
   const setSel = (el, value) => { el.value = value; fire(el, 'change'); };

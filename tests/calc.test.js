@@ -4,6 +4,7 @@ import {
   REGULAR_HOURS_PER_PERIOD,
   WEEK_FORMATS,
   dayAllocated,
+  dayCharged,
   dayCredited,
   dayIsEmpty,
   dayPTO,
@@ -125,6 +126,14 @@ test('dayVariance reports hours still needing a charge code', () => {
 
   day.alloc[REG2] = 5;
   assertEqual(dayVariance(day), -2); // over-allocated
+});
+
+test('dayCharged is everything on a code plus PTO', () => {
+  assertEqual(dayCharged({ alloc: { a: 6, b: 3 } }), 9);
+  assertEqual(dayCharged({ pto: 8, alloc: {} }), 8, 'a leave day charges its PTO');
+  assertEqual(dayCharged({ pto: 4, alloc: { a: 4 } }), 8, 'half worked, half leave');
+  assertEqual(dayCharged({}), 0);
+  assertEqual(dayCharged({ pto: 8, alloc: {}, waterOz: 64 }), 8, 'water is not hours');
 });
 
 test('dayIsEmpty distinguishes untouched days from PTO-only days', () => {

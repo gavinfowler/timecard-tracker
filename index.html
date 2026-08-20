@@ -103,6 +103,10 @@
           <input type="text" id="code-input" name="code" placeholder="PROJ-A" autocomplete="off" required>
         </div>
         <div class="field">
+          <label for="code-supp">SUPP code <span class="field__optional">(optional)</span></label>
+          <input type="text" id="code-supp" name="supp" placeholder="100" autocomplete="off">
+        </div>
+        <div class="field">
           <label for="code-label">Description <span class="field__optional">(optional)</span></label>
           <input type="text" id="code-label" name="label" placeholder="Platform work" autocomplete="off">
         </div>
@@ -116,8 +120,27 @@
       </form>
       <p id="code-error" class="form-error" role="alert" hidden></p>
 
-      <ul id="code-list" class="code-list"></ul>
+      <!-- Every code any pay period has used. Rows are built in ui.js from
+           store.codeCatalog(); the tick box is what puts one in this period. -->
+      <div class="table-scroll">
+        <table id="code-table" class="code-table">
+          <thead>
+            <tr>
+              <th scope="col">Code</th>
+              <th scope="col">SUPP</th>
+              <th scope="col">Description</th>
+              <th scope="col">Type</th>
+              <th scope="col" class="code-table__use">In this period</th>
+              <th scope="col" class="code-table__hours">This period</th>
+              <th scope="col">Last used</th>
+              <th scope="col"><span class="visually-hidden">Remove</span></th>
+            </tr>
+          </thead>
+          <tbody id="code-rows"></tbody>
+        </table>
+      </div>
       <p id="code-empty" class="empty-note">No charge codes yet. Add one to start splitting your hours.</p>
+      <button type="button" id="code-archived-toggle" class="btn btn--subtle" hidden></button>
     </section>
 
     <section class="panel" id="daygrid" aria-labelledby="days-heading">

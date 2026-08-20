@@ -14,6 +14,7 @@ import {
   WEEK_FORMATS,
   dayAllocated,
   dayBreakMinutes,
+  dayCharged,
   dayCredited,
   dayPTO,
   dayVariance,
@@ -59,9 +60,10 @@ function fmt(hours) {
   return round2(hours).toFixed(2);
 }
 
-/** Breaks are whole minutes, so they get none of the two-decimal treatment. */
-function fmtMinutes(minutes) {
-  return String(Math.round(minutes));
+/** Breaks (minutes) and water (ounces) are whole units, so they get none of the
+    two-decimal treatment. */
+function fmtWhole(value) {
+  return String(Math.round(value));
 }
 
 function state() {
@@ -166,52 +168,121 @@ function renderSummary() {
 }
 
 // --- charge codes ----------------------------------------------------------
+//
+// The panel lists every code any pay period has ever carried, not just this
+// one's. Ticking a row puts the code in this period; the x takes it out of the
+// list without touching a single stored hour, here or in any past period.
 
-function renderCodes(totals) {
-  const period = activePeriod();
-  const list = $('code-list');
-  list.textContent = '';
+/** Archived rows are hidden until this is on, so the list stays about what you
+    actually charge to. */
+let showArchived = false;
 
-  for (const code of period.codes) {
-    const item = document.createElement('li');
-    item.className = 'code-chip';
+/** "PROJ-A", "PROJ-A / 100", plus the type when it is overtime. */
+function entryName(entry) {
+  const named = entry.supp ? `${entry.code} / ${entry.supp}` : entry.code;
+  return entry.type === 'overtime' ? `${named} (overtime)` : named;
+}
 
-    const name = document.createElement('span');
-    name.className = 'code-chip__name';
-    name.textContent = code.code;
-    item.append(name);
+/** A row shows when it is live, when it is still in this period — otherwise
+    there would be no way to untick it — or when archived rows are on show. */
+function isVisibleEntry(entry) {
+  return !entry.archived || Boolean(entry.activeId) || showArchived;
+}
 
-    if (code.label) {
-      const desc = document.createElement('span');
-      desc.className = 'code-chip__desc';
-      desc.textContent = code.label;
-      item.append(desc);
-    }
+function codeCell(tr, className, text) {
+  const td = document.createElement('td');
+  td.className = className;
+  if (text !== undefined) td.textContent = text;
+  tr.append(td);
+  return td;
+}
 
-    const type = document.createElement('span');
-    type.className = `code-chip__type code-chip__type--${code.type}`;
-    type.textContent = code.type === 'overtime' ? 'OT' : 'Reg';
-    item.append(type);
+/** "this period", the range it was last charged in, or that it never was. */
+function lastUsedText(entry) {
+  if (!entry.lastChargedStart) return 'never charged';
+  if (entry.lastChargedStart === activeStart()) return 'this period';
+  return formatRange(entry.lastChargedStart);
+}
 
-    const hours = document.createElement('span');
-    hours.className = 'code-chip__hours';
-    hours.dataset.codeTotal = code.id;
-    hours.textContent = `${fmt(totals.byCode.get(code.id) || 0)} hrs`;
-    item.append(hours);
+function buildCodeTableRow(entry, totals) {
+  const tr = document.createElement('tr');
+  tr.className = 'code-table__row';
+  tr.dataset.codeKey = entry.key;
+  if (entry.archived) tr.classList.add('code-table__row--archived');
 
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'code-chip__remove';
-    remove.textContent = '×';
-    remove.title = `Remove ${code.code}`;
-    remove.setAttribute('aria-label', `Remove charge code ${code.code}`);
-    remove.addEventListener('click', () => handleRemoveCode(code));
-    item.append(remove);
+  const name = document.createElement('th');
+  name.scope = 'row';
+  name.className = 'code-table__name';
+  name.textContent = entry.code;
+  if (entry.archived) {
+    const tag = document.createElement('span');
+    tag.className = 'code-table__tag';
+    tag.textContent = 'archived';
+    name.append(' ', tag);
+  }
+  tr.append(name);
 
-    list.append(item);
+  codeCell(tr, 'code-table__supp', entry.supp || '—');
+  codeCell(tr, 'code-table__desc', entry.label);
+
+  const pill = document.createElement('span');
+  pill.className = `code-table__type code-table__type--${entry.type}`;
+  pill.textContent = entry.type === 'overtime' ? 'OT' : 'Reg';
+  codeCell(tr, 'code-table__type-cell').append(pill);
+
+  const toggle = document.createElement('input');
+  toggle.type = 'checkbox';
+  toggle.className = 'code-table__toggle';
+  toggle.checked = Boolean(entry.activeId);
+  toggle.setAttribute('aria-label', `Use ${entryName(entry)} in this pay period`);
+  toggle.addEventListener('change', () => handleToggleCode(entry, toggle));
+  codeCell(tr, 'code-table__use').append(toggle);
+
+  const hours = codeCell(tr, 'code-table__hours');
+  if (entry.activeId) {
+    hours.dataset.codeTotal = entry.activeId;
+    hours.textContent = `${fmt(totals.byCode.get(entry.activeId) || 0)} hrs`;
+  } else {
+    hours.textContent = '—';
   }
 
-  $('code-empty').hidden = period.codes.length > 0;
+  codeCell(tr, 'code-table__last', lastUsedText(entry));
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  if (entry.archived) {
+    button.className = 'btn btn--subtle code-table__restore';
+    button.textContent = 'Restore';
+    button.setAttribute('aria-label', `Restore charge code ${entryName(entry)} to the list`);
+    button.addEventListener('click', () => handleRestoreCode(entry));
+  } else {
+    button.className = 'code-table__remove';
+    button.textContent = '×';
+    button.title = `Remove ${entryName(entry)} from the list`;
+    button.setAttribute('aria-label', `Remove charge code ${entryName(entry)} from the list`);
+    button.addEventListener('click', () => handleArchiveCode(entry));
+  }
+  codeCell(tr, 'code-table__actions').append(button);
+
+  return tr;
+}
+
+function renderCodes(totals) {
+  const catalog = store.codeCatalog(state(), activeStart());
+  const visible = catalog.filter(isVisibleEntry);
+
+  const body = $('code-rows');
+  body.textContent = '';
+  for (const entry of visible) body.append(buildCodeTableRow(entry, totals));
+
+  $('code-table').hidden = visible.length === 0;
+  $('code-empty').hidden = visible.length > 0;
+
+  const hiddenCount = catalog.filter((entry) => entry.archived && !entry.activeId).length;
+  const toggle = $('code-archived-toggle');
+  toggle.hidden = hiddenCount === 0 && !showArchived;
+  toggle.textContent = showArchived ? 'Hide archived' : `Show archived (${hiddenCount})`;
+
   $('copy-codes').disabled = !hasPreviousCodes();
 }
 
@@ -221,12 +292,18 @@ function refreshCodeTotals(totals) {
   }
 }
 
+/** Archived codes are not copied forward, so they do not count towards this. */
 function hasPreviousCodes() {
   const previous = store.peekPeriod(state(), prevPeriodStart(activeStart()));
-  return Boolean(previous && previous.codes.length > 0);
+  if (!previous) return false;
+  return previous.codes.some((code) => !store.isArchived(state(), store.codeKeyOf(code)));
 }
 
-function handleRemoveCode(code) {
+/**
+ * Take a code out of the active pay period, confirming first when that would
+ * delete hours. Returns false when the confirm was declined.
+ */
+function removeCodeFromPeriod(code) {
   const totals = periodTotals(activePeriod(), activeStart());
   const allocated = totals.byCode.get(code.id) || 0;
   if (allocated !== 0) {
@@ -234,12 +311,61 @@ function handleRemoveCode(code) {
       `${codeName(code)} has ${fmt(allocated)} hours allocated in this pay period.\n\n` +
         'Removing it deletes those hours. Continue?',
     );
-    if (!ok) return;
+    if (!ok) return false;
   }
   store.removeCode(state(), activeStart(), code.id);
   if (lastUsedCodeId === code.id) lastUsedCodeId = null;
   touch();
+  return true;
+}
+
+function handleToggleCode(entry, toggle) {
+  if (toggle.checked) {
+    const result = store.addCode(state(), activeStart(), entry);
+    if (!result.ok) {
+      toggle.checked = false;
+      showToast(result.error);
+      return;
+    }
+    lastUsedCodeId = result.code.id;
+    touch();
+    render();
+    return;
+  }
+
+  const code = activePeriod().codes.find((existing) => existing.id === entry.activeId);
+  if (!code) {
+    render();
+    return;
+  }
+  if (!removeCodeFromPeriod(code)) {
+    toggle.checked = true;
+    return;
+  }
   render();
+}
+
+/** Archiving is a list operation, not a data one: it writes only to the archived
+    -code list, so every pay period keeps exactly what it already had. */
+function handleArchiveCode(entry) {
+  const ok = window.confirm(
+    `Remove ${entryName(entry)} from the charge code list?\n\n` +
+      'No hours are deleted. Past pay periods keep this code and everything charged ' +
+      'to it, and it stays a row in this pay period until you untick it. ' +
+      '"Show archived" brings it back.',
+  );
+  if (!ok) return;
+  store.archiveCode(state(), entry.key);
+  touch();
+  render();
+  showToast(`${entryName(entry)} removed from the list. No hours were deleted.`);
+}
+
+function handleRestoreCode(entry) {
+  store.restoreCode(state(), entry.key);
+  touch();
+  render();
+  showToast(`${entryName(entry)} is back in the list.`);
 }
 
 // --- day grid --------------------------------------------------------------
@@ -253,25 +379,40 @@ function dayAllocMap(dateISO) {
   return (day && day.alloc) || {};
 }
 
-/**
- * True when the same code name is carried under both charging types. The pair
- * is legitimate — plenty of employers bill overtime against the same number —
- * so the two rows have to be told apart on sight and to a screen reader.
- */
-function hasTypeTwin(code) {
-  return activePeriod().codes.some(
+/** Other codes in this period carrying the same name. */
+function namesakes(code) {
+  return activePeriod().codes.filter(
     (other) => other.id !== code.id && other.code.toLowerCase() === code.code.toLowerCase(),
   );
 }
 
-/** "PROJ-A", or "PROJ-A (overtime)" when both types of it exist. */
-function codeName(code) {
-  return hasTypeTwin(code) ? `${code.code} (${code.type})` : code.code;
+/**
+ * True when the same name *and* SUPP code is carried under both charging types.
+ * The pair is legitimate — plenty of employers bill overtime against the same
+ * number — so the two rows have to be told apart on sight and to a screen reader.
+ */
+function hasTypeTwin(code) {
+  return namesakes(code).some((other) => other.supp.toLowerCase() === code.supp.toLowerCase());
 }
 
-/** "PROJ-A — Platform work (OT)", for the hover title on a code's row. */
+/** True when the same name is carried under a different SUPP code. */
+function hasSuppTwin(code) {
+  return namesakes(code).some((other) => other.supp.toLowerCase() !== code.supp.toLowerCase());
+}
+
+/** "PROJ-A", widened to "PROJ-A / 100" or "PROJ-A (overtime)" only where the
+    name on its own would not say which row is meant. */
+function codeName(code) {
+  let text = code.code;
+  if (hasSuppTwin(code)) text += ` / ${code.supp || 'no SUPP'}`;
+  if (hasTypeTwin(code)) text += ` (${code.type})`;
+  return text;
+}
+
+/** "PROJ-A · SUPP 100 — Platform work (OT)", for the hover title on a code's row. */
 function codeDescription(code, twinned) {
   let text = code.code;
+  if (code.supp) text += ` · SUPP ${code.supp}`;
   if (code.label) text += ` — ${code.label}`;
   if (code.type === 'overtime') text += ' (OT)';
   else if (twinned) text += ' (regular)';
@@ -287,6 +428,7 @@ function refreshDay(dateISO) {
   const worked = dayWorked(day);
   handle.workedValue.textContent = fmt(worked);
   handle.overnight.hidden = !isOvernight(day);
+  handle.chargedValue.textContent = fmt(dayCharged(day));
 
   // Progress against what the week format expects of this day. PTO counts, so
   // a day taken as leave reads as met rather than as a day eight hours short.
@@ -361,13 +503,19 @@ function renderWeekTotals(weekIndex) {
 
   // The right-hand column: one week total per row of the matrix.
   let breakMinutes = 0;
+  let waterOz = 0;
   for (const dateISO of totals.dates) {
     const day = store.peekDay(state(), activeStart(), dateISO);
-    if (day) breakMinutes += dayBreakMinutes(day);
+    if (!day) continue;
+    breakMinutes += dayBreakMinutes(day);
+    waterOz += Math.max(0, toNumber(day.waterOz));
   }
-  setTotal(weekIndex, 'break', breakMinutes, fmtMinutes);
+  setTotal(weekIndex, 'break', breakMinutes, fmtWhole);
+  setTotal(weekIndex, 'water', waterOz, fmtWhole);
   setTotal(weekIndex, 'worked', totals.worked);
   setTotal(weekIndex, 'pto', totals.P);
+  // weekTotals.paid is already allocations + PTO, which is what Charged shows.
+  setTotal(weekIndex, 'charged', totals.paid);
 
   const byCode = totalsByCode(period, totals.dates);
   for (const code of period.codes) setTotal(weekIndex, `code:${code.id}`, byCode.get(code.id) || 0);
@@ -447,7 +595,7 @@ function totalCell(weekIndex, key) {
   return cell;
 }
 
-function buildTimeRow(dates, weekIndex, label, field) {
+function buildTimeRow(dates, weekIndex, label, field, slot) {
   const row = gridRow('grid__row', label);
   for (const dateISO of dates) {
     const day = store.peekDay(state(), activeStart(), dateISO) || store.emptyDay();
@@ -462,6 +610,7 @@ function buildTimeRow(dates, weekIndex, label, field) {
       touch();
       refreshAfterEdit(dateISO, weekIndex);
     });
+    rows.get(dateISO)[slot] = input;
     cell.append(input);
     row.append(cell);
   }
@@ -473,7 +622,11 @@ function buildTimeRow(dates, weekIndex, label, field) {
  * Break (minutes) and PTO (hours): one number box per day, summed in the week
  * column. `unit` names what goes in the box, for the label and the step.
  */
-function buildHoursRow(dates, weekIndex, { label, heading, key, unit = 'hours', step, read, write }) {
+function buildHoursRow(
+  dates,
+  weekIndex,
+  { label, heading, key, slot, unit = 'hours', step, read, write },
+) {
   const row = gridRow('grid__row', heading || label);
   for (const dateISO of dates) {
     const day = store.peekDay(state(), activeStart(), dateISO) || store.emptyDay();
@@ -489,6 +642,7 @@ function buildHoursRow(dates, weekIndex, { label, heading, key, unit = 'hours', 
       touch();
       refreshAfterEdit(dateISO, weekIndex);
     });
+    rows.get(dateISO)[slot] = input;
     cell.append(input);
     row.append(cell);
   }
@@ -520,12 +674,27 @@ function buildWorkedRow(dates, weekIndex) {
   return row;
 }
 
+/** Allocations plus PTO: what the day charges, against what it worked. */
+function buildChargedRow(dates, weekIndex) {
+  const row = gridRow('grid__row grid__row--charged', 'Charged');
+  for (const dateISO of dates) {
+    const cell = dayCell(dateISO, 'charged');
+    const value = document.createElement('span');
+    // Filled by refreshDay, like the worked figure above it.
+    cell.append(value);
+    rows.get(dateISO).chargedValue = value;
+    row.append(cell);
+  }
+  row.append(totalCell(weekIndex, 'charged'));
+  return row;
+}
+
 /** One charge code's row: its name on the left, then a box under each day. */
 function buildCodeRow(dates, weekIndex, code) {
   const twinned = hasTypeTwin(code);
   // Only a twinned regular code needs its type spelled out; overtime always
   // carries its tag because the tag is about pay, not about which row is which.
-  const ariaName = twinned ? `${code.code} ${code.type}` : code.code;
+  const ariaName = codeName(code);
 
   const label = document.createElement('span');
   label.className = 'grid__code';
@@ -541,6 +710,12 @@ function buildCodeRow(dates, weekIndex, code) {
     type.className = `grid__code-type grid__code-type--${code.type}`;
     type.textContent = code.type === 'overtime' ? 'OT' : 'REG';
     name.append(' ', type);
+  }
+  if (code.supp) {
+    const supp = document.createElement('span');
+    supp.className = 'grid__code-supp';
+    supp.textContent = `SUPP ${code.supp}`;
+    label.append(supp);
   }
   if (code.label) {
     const desc = document.createElement('span');
@@ -634,6 +809,49 @@ function buildBalanceRow(dates, weekIndex) {
   return row;
 }
 
+/**
+ * One day's boxes in entry order, skipping any that are not there to be
+ * focused. Kept in DOM order within the day so that falling off either end of
+ * the week lands somewhere sensible.
+ */
+function dayTabStops(handle) {
+  return [
+    handle.startInput,
+    handle.endInput,
+    handle.breakInput,
+    ...handle.allocInputs.values(),
+    handle.ptoInput,
+    handle.fill,
+    handle.waterInput,
+  ].filter((el) => el && !el.hidden && !el.disabled);
+}
+
+/**
+ * A day owns a *column*, so DOM order tabs sideways — seven Start boxes before
+ * the first End box. This walks one day to its end before moving to the next.
+ *
+ * At either end of the week the key is left alone, so focus still leaves the
+ * table the ordinary way. The ring is rebuilt on each press rather than cached,
+ * so adding a code or a fill button appearing needs no invalidation.
+ */
+function wireDayTabbing(table, dates) {
+  table.addEventListener('keydown', (event) => {
+    if (event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey) return;
+
+    const ring = dates.flatMap((dateISO) => dayTabStops(rows.get(dateISO)));
+    const index = ring.indexOf(event.target);
+    if (index === -1) return;
+
+    const next = ring[index + (event.shiftKey ? -1 : 1)];
+    if (!next) return;
+
+    event.preventDefault();
+    next.focus();
+    // Only text-ish boxes can be selected; a time input throws on select().
+    if (next.type === 'number' || next.type === 'text') next.select();
+  });
+}
+
 /** The header row: one column per day of the week. */
 function buildHeadRow(dates) {
   const row = document.createElement('tr');
@@ -695,10 +913,18 @@ function buildWeek(weekIndex) {
     rows.set(dateISO, {
       weekIndex,
       workedValue: null,
+      chargedValue: null,
       target: null,
       overnight: null,
       chip: null,
       fill: null,
+      // Named so the tab ring can put this day's boxes in entry order; DOM
+      // order runs the other way, across the days.
+      startInput: null,
+      endInput: null,
+      breakInput: null,
+      ptoInput: null,
+      waterInput: null,
       allocInputs: new Map(),
       lastCodeId: null,
     });
@@ -736,18 +962,18 @@ function buildWeek(weekIndex) {
   const times = document.createElement('tbody');
   times.className = 'grid__band';
   times.append(
-    buildTimeRow(dates, weekIndex, 'Start', 'start'),
-    buildTimeRow(dates, weekIndex, 'End', 'end'),
+    buildTimeRow(dates, weekIndex, 'Start', 'start', 'startInput'),
+    buildTimeRow(dates, weekIndex, 'End', 'end', 'endInput'),
     buildHoursRow(dates, weekIndex, {
       label: 'Break',
       heading: 'Break (min)',
       key: 'break',
+      slot: 'breakInput',
       unit: 'minutes',
       step: '5',
       read: (day) => dayBreakMinutes(day),
       write: (day, value) => { day.breakMinutes = Math.max(0, Math.round(value)); },
     }),
-    buildWorkedRow(dates, weekIndex),
   );
   table.append(times);
 
@@ -759,19 +985,43 @@ function buildWeek(weekIndex) {
     table.append(band);
   }
 
+  // Leave, then what the day worked, then what it charged against that
+  // (allocations + PTO), then whether the two agree.
   const foot = document.createElement('tbody');
   foot.className = 'grid__band';
   foot.append(
     buildHoursRow(dates, weekIndex, {
       label: 'PTO',
       key: 'pto',
+      slot: 'ptoInput',
       read: (day) => toNumber(day.pto),
       write: (day, value) => { day.pto = Math.max(0, value); },
     }),
+    buildWorkedRow(dates, weekIndex),
+    buildChargedRow(dates, weekIndex),
     buildBalanceRow(dates, weekIndex),
   );
   table.append(foot);
 
+  // Not timecard data, and deliberately outside every hour total and the CSV
+  // export — it is here because the day grid is a convenient place to log it.
+  const water = document.createElement('tbody');
+  water.className = 'grid__band grid__band--water';
+  water.append(
+    buildHoursRow(dates, weekIndex, {
+      label: 'Water',
+      heading: 'Water (oz)',
+      key: 'water',
+      slot: 'waterInput',
+      unit: 'ounces',
+      step: '8',
+      read: (day) => toNumber(day.waterOz),
+      write: (day, value) => { day.waterOz = Math.max(0, Math.round(value)); },
+    }),
+  );
+  table.append(water);
+
+  wireDayTabbing(table, dates);
   scroll.append(table);
   section.append(scroll);
   return section;
@@ -876,6 +1126,7 @@ function wireCodeForm() {
     const data = new FormData(form);
     const result = store.addCode(state(), activeStart(), {
       code: data.get('code'),
+      supp: data.get('supp'),
       label: data.get('label'),
       type: data.get('type'),
     });
@@ -885,10 +1136,16 @@ function wireCodeForm() {
       return;
     }
     error.hidden = true;
+    store.restoreCode(state(), store.codeKeyOf(result.code));
     lastUsedCodeId = result.code.id;
     form.reset();
     $('code-input').focus();
     touch();
+    render();
+  });
+
+  $('code-archived-toggle').addEventListener('click', () => {
+    showArchived = !showArchived;
     render();
   });
 
