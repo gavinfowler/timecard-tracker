@@ -494,7 +494,7 @@ table.grid thead th {
 }
 .grid__code-type--regular { background: var(--accent-soft); color: var(--accent); }
 
-.grid__row--charged .grid__cell { font-variant-numeric: tabular-nums; font-weight: 600; }
+.grid__row--charged .grid__cell { font-weight: 600; }
 .grid__row--charged .grid__label { color: var(--text-muted); }
 
 .grid__band--water .grid__label,
@@ -521,9 +521,11 @@ table.grid thead th {
 .hours-input { text-align: right; }
 .hours-input.is-over { border-color: var(--danger); }
 
-/* Worked hours and the week totals are text, not inputs, so they are inset by
-   the input's own padding to line up with the digits above and below them. */
+/* The computed rows and the week totals are text, not inputs, so they are inset
+   by the input's own padding to line up with the digits above and below them. */
 .grid__row--worked .grid__cell,
+.grid__row--charged .grid__cell,
+.grid__row--balance .grid__cell,
 .grid__total {
   text-align: right;
   padding-right: 0.8rem;
